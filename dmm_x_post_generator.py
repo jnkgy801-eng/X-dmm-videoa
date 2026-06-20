@@ -300,6 +300,8 @@ def parse_product(item):
                 sample_movie_url = val.strip()
                 break
 
+    content_id = item.get('content_id', '') or item.get('product_id', '')
+
     return {
         'title':            title,
         'affiliate_url':    affiliate_url,
@@ -309,6 +311,7 @@ def parse_product(item):
         'genres':           genres,
         'maker':            maker,
         'sample_movie_url': sample_movie_url,
+        'content_id':       content_id,
     }
 
 def clean_url(url):
@@ -415,50 +418,102 @@ def get_x_clients():
     return api_v1, client_v2
 
 
-def resolve_litevideo_mp4_url(page_url):
+_SAMPLE_HTTP_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Referer': 'https://www.dmm.co.jp/',
+}
+# DMM/FANZAは年齢確認を済ませていないとサンプル動画ページが
+# 年齢確認画面にリダイレクトされ、動画情報が一切含まれなくなる。
+_SAMPLE_HTTP_COOKIES = {
+    'age_check_done': '1',
+}
+
+
+def _clean_content_id(content_id):
+    return re.sub(r'[^0-9a-zA-Z]', '', content_id or '')
+
+
+def build_direct_cdn_candidates(content_id):
+    """
+    content_id から、FANZA動画でよく使われる直リンクの命名規則を組み立てる。
+    例: https://cc3001.dmm.co.jp/litevideo/freepv/r/rb/rbd00185/rbd00185_mhb_w.mp4
+    実在しない場合もあるため、複数パターン・複数サフィックスを候補として返す。
+    """
+    cid = _clean_content_id(content_id)
+    if not cid:
+        return []
+
+    suffixes = ['mhb_w', 'dmb_w', 'sm_w', 'mhb_s', 'dmb_s', 'sm_s']
+    hosts = ['cc3001.dmm.co.jp', 'cc3001.dmm.com']
+    candidates = []
+    for host in hosts:
+        for suf in suffixes:
+            candidates.append(
+                f'https://{host}/litevideo/freepv/{cid[0]}/{cid[0:3]}/{cid}/{cid}_{suf}.mp4'
+            )
+    return candidates
+
+
+def resolve_litevideo_mp4_url(page_url, content_id=''):
     """
     DMM/FANZAの 'litevideo' URL (.../litevideo/-/part/=/cid=.../size=.../)は
     動画ファイルそのものではなく、プレイヤーを埋め込んだHTMLページのURL。
-    そのHTMLの中から実際の .mp4 ファイルのURLを抜き出して返す。
-    既に .mp4 で終わるURLが渡された場合はそのまま返す。
+    1. まずcontent_idから直リンクの命名規則を推測して存在確認（速くて確実）
+    2. ダメならHTMLページを取得して中から実際の.mp4 URLを抜き出す
+    既に.mp4で終わるURLが渡された場合はそのまま返す。
     """
     if not page_url:
         return ''
     if page_url.lower().endswith('.mp4'):
         return page_url
 
+    # --- 方式1: 命名規則からの直接推測 ---
+    for cand in build_direct_cdn_candidates(content_id):
+        try:
+            r = requests.head(
+                cand, timeout=8, allow_redirects=True,
+                headers=_SAMPLE_HTTP_HEADERS, cookies=_SAMPLE_HTTP_COOKIES,
+            )
+            if r.status_code == 200 and int(r.headers.get('Content-Length', '0') or 0) > 10000:
+                return cand
+        except Exception:
+            continue
+
+    # --- 方式2: litevideoページをスクレイピングして中の.mp4 URLを抜く ---
     try:
         resp = requests.get(
             page_url, timeout=15,
-            headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.dmm.co.jp/'},
+            headers=_SAMPLE_HTTP_HEADERS, cookies=_SAMPLE_HTTP_COOKIES,
         )
         resp.raise_for_status()
     except Exception as e:
         print(f'  ❌ litevideoページの取得に失敗: {e}')
         return ''
 
-    # ページ内 (video/source タグ、JSの変数代入など) から .mp4 のURLを正規表現で抽出
-    candidates = re.findall(r'https?://[^\s\'"<>]+\.mp4', resp.text)
+    # JSON内などでは "https:\/\/..." のようにスラッシュがエスケープされているため、
+    # 正規表現にかける前に元に戻しておく。
+    body = resp.text.replace('\\/', '/')
+    candidates = re.findall(r'https?://[^\s\'"<>]+\.mp4', body)
     if not candidates:
-        print('  ⚠️  litevideoページ内に.mp4のURLが見つかりませんでした。')
+        print('  ⚠️  litevideoページ内に.mp4のURLが見つかりませんでした'
+              '（年齢確認画面にリダイレクトされたか、この商品にサンプル動画が無い可能性があります）。')
         return ''
-    # 複数見つかった場合は最初のものを採用（通常はプレイヤーが参照する1本のみ）
     return candidates[0]
 
 
-def download_sample_video(url, max_bytes=200 * 1024 * 1024):
+def download_sample_video(url, content_id='', max_bytes=200 * 1024 * 1024):
     """サンプル動画をダウンロードして一時ファイルに保存し、パスを返す。失敗時はNone。"""
     if not url:
         return None
 
-    mp4_url = resolve_litevideo_mp4_url(url)
+    mp4_url = resolve_litevideo_mp4_url(url, content_id)
     if not mp4_url:
         return None
 
     try:
         resp = requests.get(
             mp4_url, stream=True, timeout=30,
-            headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.dmm.co.jp/'},
+            headers=_SAMPLE_HTTP_HEADERS, cookies=_SAMPLE_HTTP_COOKIES,
         )
         resp.raise_for_status()
 
@@ -541,7 +596,7 @@ def post_to_x_api(api_v1, client_v2, product, text):
         print('  ⚠️  サンプル動画URLが無いためスキップします。')
         return False
 
-    video_path = download_sample_video(sample_url)
+    video_path = download_sample_video(sample_url, product.get('content_id', ''))
     if not video_path:
         return False
 
@@ -588,7 +643,7 @@ def post_to_x_browser(page, product, text):
         print('  ⚠️  サンプル動画URLが無いためスキップします。')
         return False
 
-    video_path = download_sample_video(sample_url)
+    video_path = download_sample_video(sample_url, product.get('content_id', ''))
     if not video_path:
         return False
 
