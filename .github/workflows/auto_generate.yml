@@ -1,0 +1,125 @@
+name: DMM X投稿文ジェネレーター
+
+on:
+  workflow_dispatch:
+    inputs:
+      post_start_index:
+        description: '取得開始番号（空欄でランダム自動設定）例: 1→1〜20件目, 21→21〜40件目'
+        required: false
+        default: ''
+        type: string
+      dmm_sort_mode:
+        description: 'ソートモード'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - both   # 新着20件＋人気20件（デフォルト・推奨）
+          - date   # 新着順のみ20件
+          - rank   # 人気順のみ20件
+      dmm_floor:
+        description: 'フロア種別'
+        required: false
+        default: 'videoa'
+        type: choice
+        options:
+          - videoa
+          - videoc
+          - anime
+          - doujin # FANZA同人
+          - comic
+          - goods
+      dmm_price_range:
+        description: '価格フィルター（商品の値段で絞り込み）'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all          # すべての価格
+          - 0-999        # 999円以下
+          - 1000-1999    # 1000〜1999円
+          - 2000-2999    # 2000〜2999円
+          - 3000-4999    # 3000〜4999円
+          - 5000-9999    # 5000〜9999円
+          - 10000-99999  # 10000円以上
+      auto_post_to_x:
+        description: '動画埋め込みでXに自動投稿する'
+        required: false
+        default: false
+        type: boolean
+      post_method:
+        description: '投稿方式（browser=API課金なし/規約リスクあり、api=公式API/課金あり）'
+        required: false
+        default: 'browser'
+        type: choice
+        options:
+          - browser
+          - api
+      x_post_limit:
+        description: '自動投稿する最大件数（凍結リスク/課金が発生するため必ず指定）'
+        required: false
+        default: '5'
+        type: string
+
+jobs:
+  generate-posts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v3
+
+      - name: Pythonのセットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 依存ライブラリのインストール
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests tweepy playwright
+
+      - name: Playwrightのブラウザをインストール（ブラウザ方式の場合のみ）
+        if: ${{ (github.event.inputs.auto_post_to_x == 'true') && (github.event.inputs.post_method || 'browser') == 'browser' }}
+        run: playwright install --with-deps chromium
+
+      - name: 取得開始番号の設定（空欄ならランダム）
+        id: set_start_index
+        run: |
+          INPUT="${{ github.event.inputs.post_start_index }}"
+          if [ -z "$INPUT" ]; then
+            RAND=$(python3 -c "import random; print(random.randint(1, 480))")
+            echo "start_index=$RAND" >> $GITHUB_OUTPUT
+            echo "🎲 ランダム取得開始番号: $RAND"
+          else
+            echo "start_index=$INPUT" >> $GITHUB_OUTPUT
+            echo "📌 指定取得開始番号: $INPUT"
+          fi
+
+      - name: X投稿文を生成（＋設定により自動投稿）
+        env:
+          DMM_API_ID:           ${{ secrets.DMM_API_ID }}
+          DMM_AFFILIATE_ID:     ${{ secrets.DMM_AFFILIATE_ID }}
+          POST_START_INDEX:     ${{ steps.set_start_index.outputs.start_index }}
+          DMM_SORT_MODE:        ${{ github.event.inputs.dmm_sort_mode || 'both' }}
+          DMM_FLOOR:            ${{ github.event.inputs.dmm_floor || 'videoa' }}
+          DMM_PRICE_RANGE:      ${{ github.event.inputs.dmm_price_range || 'all' }}
+          SAVE_TO_REPO:         'true'
+          AUTO_POST_TO_X:       ${{ github.event.inputs.auto_post_to_x || 'false' }}
+          POST_METHOD:          ${{ github.event.inputs.post_method || 'browser' }}
+          X_POST_LIMIT:         ${{ github.event.inputs.x_post_limit || '5' }}
+          # ブラウザ方式（POST_METHOD=browser）で使用：x_login_setup.pyで作ったセッションをBase64化してSecret登録
+          X_SESSION_STATE_B64:  ${{ secrets.X_SESSION_STATE_B64 }}
+          # API方式（POST_METHOD=api）で使用
+          X_API_KEY:            ${{ secrets.X_API_KEY }}
+          X_API_SECRET:         ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN:       ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET:      ${{ secrets.X_ACCESS_SECRET }}
+        run: python dmm_x_post_generator.py
+
+      - name: 生成したTXTをリポジトリにコミット
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add outputs/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 自動生成: X投稿テキスト更新 ($(date +'%Y-%m-%d %H:%M:%S'))" && git push)
