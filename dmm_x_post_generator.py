@@ -418,6 +418,83 @@ def get_x_clients():
     return api_v1, client_v2
 
 
+def resolve_and_download_via_browser(context, page_url, content_id='', max_bytes=200 * 1024 * 1024):
+    """
+    litevideoページを「requestsライブラリ」ではなく、実際のChromiumブラウザ(context)で
+    開いて動画の実体URLを取得し、ダウンロードする。
+    cc3001.dmm.co.jp 等のCDNは単純なrequestsアクセスをbot判定でブロックすることがあるため、
+    既にXログイン用に開いている本物のブラウザコンテキストを流用することで通過させる狙い。
+    """
+    if not page_url:
+        return None
+
+    mp4_url = page_url if page_url.lower().endswith('.mp4') else None
+
+    if not mp4_url:
+        tab = context.new_page()
+        captured = {}
+
+        def on_response(resp):
+            if '.mp4' in resp.url and resp.status == 200 and 'mp4_url' not in captured:
+                captured['mp4_url'] = resp.url
+
+        try:
+            tab.on('response', on_response)
+            tab.goto(page_url, timeout=20000)
+
+            # <video>タグに直接srcが入っているケース
+            try:
+                tab.wait_for_selector('video', timeout=8000)
+                src = tab.eval_on_selector('video', 'el => el.currentSrc || el.src || ""')
+                if src and '.mp4' in src:
+                    mp4_url = src
+            except Exception:
+                pass
+
+            # 再生開始まで動画srcがセットされないプレイヤーもあるため、
+            # 再生ボタンらしき要素をクリックしてみてネットワークから.mp4を拾う
+            if not mp4_url:
+                for sel in ['video', '.play-button', '[class*="play"]', 'button']:
+                    try:
+                        tab.click(sel, timeout=1500)
+                        break
+                    except Exception:
+                        continue
+                tab.wait_for_timeout(3000)
+                mp4_url = captured.get('mp4_url')
+        except Exception as e:
+            print(f'  ❌ litevideoページの読み込みに失敗: {e}')
+        finally:
+            tab.close()
+
+    if not mp4_url:
+        print('  ⚠️  ブラウザ経由でも.mp4のURLを取得できませんでした'
+              '（この商品にサンプル動画が無い可能性があります）。')
+        return None
+
+    try:
+        resp = context.request.get(mp4_url, timeout=30000)
+        if resp.status != 200:
+            print(f'  ❌ 動画ダウンロード失敗（HTTP {resp.status}）')
+            return None
+        body = resp.body()
+        if len(body) > max_bytes:
+            print('  ⚠️  動画サイズが大きすぎます。スキップします。')
+            return None
+        if len(body) < 1024 or b'ftyp' not in body[:64]:
+            print('  ⚠️  ダウンロードした内容が動画ファイルではないようです。スキップします。')
+            return None
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+        tmp.write(body)
+        tmp.close()
+        print(f'  ✅ 動画ダウンロード完了（{len(body) / 1024 / 1024:.1f}MB・ブラウザ経由）')
+        return tmp.name
+    except Exception as e:
+        print(f'  ❌ 動画ダウンロード失敗: {e}')
+        return None
+
+
 _SAMPLE_HTTP_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': 'https://www.dmm.co.jp/',
@@ -636,14 +713,19 @@ def get_browser_page(playwright):
     return browser, context, page
 
 
-def post_to_x_browser(page, product, text):
+def post_to_x_browser(context, page, product, text):
     """【ブラウザ方式】動画をダウンロードし、Xの投稿画面を直接操作して投稿する。"""
     sample_url = clean_url(product.get('sample_movie_url', ''))
     if not sample_url:
         print('  ⚠️  サンプル動画URLが無いためスキップします。')
         return False
 
-    video_path = download_sample_video(sample_url, product.get('content_id', ''))
+    # まず実ブラウザ(同じcontext)経由で動画を取りに行く。
+    # requestsライブラリ単体だとCDN側のbot対策で弾かれることがあるため。
+    video_path = resolve_and_download_via_browser(context, sample_url, product.get('content_id', ''))
+    if not video_path:
+        # 念のためrequestsベースの方式もフォールバックとして試す
+        video_path = download_sample_video(sample_url, product.get('content_id', ''))
     if not video_path:
         return False
 
@@ -869,7 +951,7 @@ if AUTO_POST_TO_X:
                         break
                     print(f"\n--- 投稿 {posted_count + 1}/{X_POST_LIMIT} ---")
                     print(f"商品名: {product['title'][:40]}")
-                    success = post_to_x_browser(page, product, text)
+                    success = post_to_x_browser(context, page, product, text)
                     if success:
                         posted_count += 1
                         if posted_count < X_POST_LIMIT:
