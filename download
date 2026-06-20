@@ -1,0 +1,10 @@
+# Xログインセッション（パスワード相当・絶対にコミットしない）
+x_session.json
+*.session.json
+
+# Python
+__pycache__/
+*.pyc
+
+# 環境変数ファイル
+.env
