@@ -240,6 +240,98 @@ COPY_TEMPLATES = [
 def get_copy():
     return random.choice(COPY_TEMPLATES)
 
+
+# ----------------------------------------------------------------
+# ✨ おすすめポイント自動生成（DMM APIのデータから）
+#    ジャンル・女優・メーカー・レビュー評価・価格などを組み合わせて、
+#    商品ごとに違った訴求文を作る。固定文のランダム抽選より具体的になる。
+# ----------------------------------------------------------------
+
+_OPENERS = ["注目ポイントは", "イチオシは", "見どころは", "ここが魅力："]
+_GENRE_PHRASES = ["「{g}」好きにはたまらない一本", "「{g}」要素がしっかり詰まった内容", "「{g}」ジャンルの中でも完成度の高い一作"]
+_ACTOR_PHRASES = ["{a}の魅力を存分に堪能できる", "{a}出演作をお探しの方は必見", "{a}ファンなら見逃せない"]
+_REVIEW_PHRASES = ["レビュー平均{avg}（{count}件）の高評価作品", "★{avg}の高評価レビューが多数"]
+_MAKER_PHRASES = ["{m}制作ならではのクオリティ"]
+_PRICE_PHRASES = ["{p}でこの内容はお得感あり"]
+_FALLBACK_PHRASES = [
+    "高画質サンプルで雰囲気をチェックしてから購入できる",
+    "気になる方はまずサンプル動画から確認を",
+    "じっくり本編を楽しみたい一本",
+]
+
+
+def build_recommend_points(product, max_len=60):
+    """商品データ（ジャンル・女優・メーカー・レビュー・価格）から
+    'おすすめポイント'を要約した一文を作る。情報が無い項目はスキップする。
+    """
+    parts = []
+
+    if product.get('review_avg'):
+        avg = product['review_avg']
+        count = product.get('review_count')
+        if count:
+            parts.append(random.choice(_REVIEW_PHRASES).format(avg=avg, count=count))
+        else:
+            parts.append(random.choice(_REVIEW_PHRASES).format(avg=avg, count=''))
+
+    if product.get('genres'):
+        parts.append(random.choice(_GENRE_PHRASES).format(g=product['genres'][0]))
+
+    if product.get('actors'):
+        parts.append(random.choice(_ACTOR_PHRASES).format(a=product['actors'][0]))
+
+    if not parts and product.get('maker'):
+        parts.append(random.choice(_MAKER_PHRASES).format(m=product['maker']))
+
+    if not parts:
+        parts.append(random.choice(_FALLBACK_PHRASES))
+
+    point = parts[0]
+    opener = random.choice(_OPENERS)
+    text = f"{opener}{point}🔥" if not point.endswith(('✨', '🔥', '👀')) else f"{opener}{point}"
+
+    if len(text) > max_len:
+        text = text[:max_len - 1] + '…'
+    return text
+
+
+# ----------------------------------------------------------------
+# 🔗 URL確認・短縮
+# ----------------------------------------------------------------
+
+def check_url(url, timeout=8):
+    """URLが実際にアクセス可能かHEADリクエストで確認する。結果はTrue/False/None(未確認)。"""
+    if not url:
+        return None
+    try:
+        resp = requests.head(url, timeout=timeout, allow_redirects=True,
+                              headers={'User-Agent': 'Mozilla/5.0'})
+        if resp.status_code >= 400:
+            # HEADを許可していないサーバーもあるためGETで再確認
+            resp = requests.get(url, timeout=timeout, stream=True,
+                                 headers={'User-Agent': 'Mozilla/5.0'})
+        return resp.status_code < 400
+    except Exception:
+        return None
+
+
+def shorten_url(url, timeout=8):
+    """TinyURL（APIキー不要）でURLを短縮する。失敗時は元のURLをそのまま返す。"""
+    if not url:
+        return url
+    try:
+        resp = requests.get(
+            'https://tinyurl.com/api-create.php',
+            params={'url': url},
+            timeout=timeout,
+        )
+        short = resp.text.strip()
+        if resp.status_code == 200 and short.startswith('http'):
+            return short
+    except Exception as e:
+        print(f'  ⚠️  URL短縮に失敗（元のURLを使用します）: {e}')
+    return url
+
 # ================================================================
 # 🔧 DMM API 関数
 # ================================================================
@@ -302,6 +394,22 @@ def parse_product(item):
 
     content_id = item.get('content_id', '') or item.get('product_id', '')
 
+    # レビュー情報（平均評価・件数）。商品によっては存在しない。
+    review_info  = item.get('review', {}) or {}
+    review_avg   = review_info.get('average', '')
+    review_count = review_info.get('count', '')
+    try:
+        review_avg = float(review_avg) if review_avg not in ('', None) else None
+    except (TypeError, ValueError):
+        review_avg = None
+    try:
+        review_count = int(review_count) if review_count not in ('', None) else None
+    except (TypeError, ValueError):
+        review_count = None
+
+    # 配信開始日（新着訴求に使う）
+    date_str = item.get('date', '')
+
     return {
         'title':            title,
         'affiliate_url':    affiliate_url,
@@ -312,6 +420,9 @@ def parse_product(item):
         'maker':            maker,
         'sample_movie_url': sample_movie_url,
         'content_id':       content_id,
+        'review_avg':       review_avg,
+        'review_count':     review_count,
+        'date':             date_str,
     }
 
 def clean_url(url):
@@ -351,7 +462,25 @@ def build_x_post(product):
     hashtags  = HASHTAG_MAP.get(DMM_FLOOR, HASHTAG_MAP['default'])
     url       = clean_url(product['affiliate_url'])
     sample    = clean_url(product.get('sample_movie_url', ''))
-    copy      = get_copy()
+
+    # --- URL確認 ---
+    url_ok    = check_url(url) if url else None
+    sample_ok = check_url(sample) if sample else None
+    if url and url_ok is False:
+        print(f"    ⚠️  アフィリエイトURLにアクセスできませんでした: {url}")
+    if sample and sample_ok is False:
+        print(f"    ⚠️  サンプル動画URLにアクセスできませんでした: {sample}")
+
+    # --- サンプル動画URLを短縮 ---
+    sample_short = shorten_url(sample) if sample else ''
+
+    # save_posts()で出力するため商品データに確認結果を残しておく
+    product['url_check']        = url_ok
+    product['sample_url_short'] = sample_short
+    product['sample_check']     = sample_ok
+
+    # --- おすすめポイントを生成（DMMデータから） ---
+    copy      = build_recommend_points(product)
     act_tags  = actor_tags(product['actors'])
 
     title = product['title']
@@ -371,8 +500,8 @@ def build_x_post(product):
         lines.append(f"🎞 {genre_tags(product['genres'])}")
     lines.append('')
     lines.append(url)
-    if sample:
-        lines.append(f"▶ サンプル動画: {sample}")
+    if sample_short:
+        lines.append(f"▶ サンプル動画: {sample_short}")
     lines.append(hashtags)
 
     text = '\n'.join(lines)
@@ -391,10 +520,16 @@ def build_x_post(product):
             lines2.append(f"🎞 {genre_tags(product['genres'][:2])}")
         lines2.append('')
         lines2.append(url)
-        if sample:
-            lines2.append(f"▶ サンプル: {sample}")
+        if sample_short:
+            lines2.append(f"▶ サンプル: {sample_short}")
         lines2.append(hashtags)
         text = '\n'.join(lines2)
+
+    # それでも280文字を超える場合は、おすすめポイントを短くして再調整
+    if len(text) > 280:
+        over = len(text) - 280
+        short_copy = copy[:max(10, len(copy) - over - 1)] + '…'
+        text = text.replace(copy, short_copy, 1)
 
     return text
 
@@ -852,9 +987,15 @@ def save_posts(all_sections):
                 f.write(f"--- {sort_label} {i}/{len(posts)} ---\n")
                 f.write(f"商品名: {product['title']}\n")
                 f.write(f"文字数: {len(text)}文字\n")
-                f.write(f"URL確認: {product['affiliate_url']}\n")
+
+                url_status = {True: 'OK', False: 'NG（要確認）', None: '未確認'}.get(product.get('url_check'))
+                f.write(f"URL確認: {product['affiliate_url']} [{url_status}]\n")
+
                 if product.get('sample_movie_url'):
-                    f.write(f"サンプル動画: {product['sample_movie_url']}\n")
+                    sample_status = {True: 'OK', False: 'NG（要確認）', None: '未確認'}.get(product.get('sample_check'))
+                    f.write(f"サンプル動画(元URL): {product['sample_movie_url']} [{sample_status}]\n")
+                    if product.get('sample_url_short'):
+                        f.write(f"サンプル動画(短縮URL): {product['sample_url_short']}\n")
                 f.write("-" * 40 + "\n")
                 f.write(text)
                 f.write("\n\n")
