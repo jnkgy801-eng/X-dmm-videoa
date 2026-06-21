@@ -62,6 +62,14 @@ SORT_TARGETS = {
 SORT_LIST = SORT_TARGETS.get(DMM_SORT_MODE, SORT_TARGETS['both'])
 
 # ----------------------------------------------------------------
+# 🔢 処理件数の上限（速度優先のため、1回の実行で処理する商品数の合計を制限する）
+#    DMM_SORT_MODE=both のように複数ソートを使う場合は、合計でこの件数に収まるよう
+#    各ソートの取得件数を自動的に按分する。
+# ----------------------------------------------------------------
+MAX_PROCESS_COUNT = int(os.environ.get('MAX_PROCESS_COUNT', '30'))
+print(f'🔢 処理件数の上限: 合計 {MAX_PROCESS_COUNT} 件（ソート {len(SORT_LIST)} 種類）')
+
+# ----------------------------------------------------------------
 # 🎲 取得開始位置（環境変数未設定時はランダム: 1〜480）
 # ----------------------------------------------------------------
 _raw_start = os.environ.get('POST_START_INDEX', '')
@@ -72,7 +80,7 @@ else:
     POST_START_INDEX = random.randint(1, 480)
     print(f'🎲 ランダム取得開始番号: {POST_START_INDEX}')
 
-FETCH_COUNT = 100
+FETCH_COUNT = max(1, -(-MAX_PROCESS_COUNT // len(SORT_LIST)))  # 切り上げで按分（例: 30件÷2ソート=15件ずつ）
 DMM_OFFSET  = POST_START_INDEX
 DMM_HITS    = FETCH_COUNT
 
@@ -248,55 +256,72 @@ def get_copy():
 # ----------------------------------------------------------------
 
 _OPENERS = ["注目ポイントは", "イチオシは", "見どころは", "ここが魅力："]
-_GENRE_PHRASES = ["「{g}」好きにはたまらない一本", "「{g}」要素がしっかり詰まった内容", "「{g}」ジャンルの中でも完成度の高い一作"]
-_ACTOR_PHRASES = ["{a}の魅力を存分に堪能できる", "{a}出演作をお探しの方は必見", "{a}ファンなら見逃せない"]
-_REVIEW_PHRASES = ["レビュー平均{avg}（{count}件）の高評価作品", "★{avg}の高評価レビューが多数"]
-_MAKER_PHRASES = ["{m}制作ならではのクオリティ"]
-_PRICE_PHRASES = ["{p}でこの内容はお得感あり"]
+_CLOSERS = ["気になる方は本編をチェック🔥", "詳しくはサンプルでも確認できます👀", "見逃さずチェックしておこう✨", "気になったら早めにチェック📌"]
 _FALLBACK_PHRASES = [
-    "高画質サンプルで雰囲気をチェックしてから購入できる",
-    "気になる方はまずサンプル動画から確認を",
+    "高画質サンプルで雰囲気をチェックしてから購入できる注目作品",
     "じっくり本編を楽しみたい一本",
+    "話題のラインナップの中でも目を引く一作",
 ]
 
 
-def build_recommend_points(product, max_len=60):
-    """商品データ（ジャンル・女優・メーカー・レビュー・価格）から
-    'おすすめポイント'を要約した一文を作る。情報が無い項目はスキップする。
+def build_recommend_points(product, max_len=120):
+    """商品データ（ジャンル・出演者・メーカー・レビュー・価格）から、
+    作品の内容が伝わる『おすすめポイント』文章を作る。
+    max_len の範囲内でできるだけ多くの要素を盛り込み、文字数を有効活用する。
     """
-    parts = []
+    segments = []
+
+    if product.get('genres'):
+        gs = '・'.join(product['genres'][:3])
+        segments.append(f"ジャンルは{gs}系")
+
+    if product.get('actors'):
+        as_ = '・'.join(product['actors'][:2])
+        segments.append(f"出演は{as_}")
 
     if product.get('review_avg'):
         avg = product['review_avg']
         count = product.get('review_count')
         if count:
-            parts.append(random.choice(_REVIEW_PHRASES).format(avg=avg, count=count))
+            segments.append(f"レビュー平均{avg}（{count}件）の高評価")
         else:
-            parts.append(random.choice(_REVIEW_PHRASES).format(avg=avg, count=''))
+            segments.append(f"レビュー評価{avg}の高評価")
 
-    if product.get('genres'):
-        parts.append(random.choice(_GENRE_PHRASES).format(g=product['genres'][0]))
+    if product.get('maker'):
+        segments.append(f"{product['maker']}制作")
 
-    if product.get('actors'):
-        parts.append(random.choice(_ACTOR_PHRASES).format(a=product['actors'][0]))
+    if product.get('price'):
+        segments.append(f"価格は{product['price']}")
 
-    if not parts and product.get('maker'):
-        parts.append(random.choice(_MAKER_PHRASES).format(m=product['maker']))
+    if not segments:
+        segments.append(random.choice(_FALLBACK_PHRASES))
 
-    if not parts:
-        parts.append(random.choice(_FALLBACK_PHRASES))
-
-    point = parts[0]
     opener = random.choice(_OPENERS)
-    text = f"{opener}{point}🔥" if not point.endswith(('✨', '🔥', '👀')) else f"{opener}{point}"
+    closer = random.choice(_CLOSERS)
 
+    # 入る範囲までセグメントを「、」でつなげて、文字数上限を有効活用する
+    body = ''
+    for i, seg in enumerate(segments):
+        sep = '' if i == 0 else '、'
+        candidate = body + sep + seg
+        # opener + candidate + '。' + closer が収まるかチェック
+        if len(opener) + len(candidate) + 1 + len(closer) > max_len:
+            break
+        body = candidate
+
+    if not body:
+        # 1要素も入らない場合は最低限の要約を切り詰めて表示
+        text = (opener + segments[0])[:max_len - 1] + '…'
+        return text
+
+    text = f"{opener}{body}。{closer}"
     if len(text) > max_len:
         text = text[:max_len - 1] + '…'
     return text
 
 
 # ----------------------------------------------------------------
-# 🔗 URL確認・短縮
+# 🔗 URL確認
 # ----------------------------------------------------------------
 
 def check_url(url, timeout=8):
@@ -313,24 +338,6 @@ def check_url(url, timeout=8):
         return resp.status_code < 400
     except Exception:
         return None
-
-
-def shorten_url(url, timeout=8):
-    """TinyURL（APIキー不要）でURLを短縮する。失敗時は元のURLをそのまま返す。"""
-    if not url:
-        return url
-    try:
-        resp = requests.get(
-            'https://tinyurl.com/api-create.php',
-            params={'url': url},
-            timeout=timeout,
-        )
-        short = resp.text.strip()
-        if resp.status_code == 200 and short.startswith('http'):
-            return short
-    except Exception as e:
-        print(f'  ⚠️  URL短縮に失敗（元のURLを使用します）: {e}')
-    return url
 
 # ================================================================
 # 🔧 DMM API 関数
@@ -458,12 +465,28 @@ def price_in_range(product):
     return True
 
 
-def build_x_post(product):
+# ----------------------------------------------------------------
+# 📏 X（Twitter）の文字数カウント
+#    Xは投稿内のURLをどんな長さでも自動的にt.co形式（23文字固定）に短縮して
+#    文字数をカウントする。そのため、見た目のURLは元の長さのまま表示しつつ、
+#    文字数チェックだけはURLを23文字として計算する。
+#    （手動でのURL短縮サービス利用が不要な理由でもある）
+# ----------------------------------------------------------------
+X_T_CO_URL_LENGTH = 23
+_URL_PATTERN = re.compile(r'https?://\S+')
+
+
+def x_text_length(text):
+    """Xの実際の文字数カウント仕様（URL=23文字固定）に合わせた文字数を返す。"""
+    return len(_URL_PATTERN.sub('x' * X_T_CO_URL_LENGTH, text))
+
+
+def build_x_post(product, char_limit=280):
     hashtags  = HASHTAG_MAP.get(DMM_FLOOR, HASHTAG_MAP['default'])
     url       = clean_url(product['affiliate_url'])
     sample    = clean_url(product.get('sample_movie_url', ''))
 
-    # --- URL確認 ---
+    # --- URL確認（短縮は行わない） ---
     url_ok    = check_url(url) if url else None
     sample_ok = check_url(sample) if sample else None
     if url and url_ok is False:
@@ -471,63 +494,52 @@ def build_x_post(product):
     if sample and sample_ok is False:
         print(f"    ⚠️  サンプル動画URLにアクセスできませんでした: {sample}")
 
-    # --- サンプル動画URLを短縮 ---
-    sample_short = shorten_url(sample) if sample else ''
-
     # save_posts()で出力するため商品データに確認結果を残しておく
-    product['url_check']        = url_ok
-    product['sample_url_short'] = sample_short
-    product['sample_check']     = sample_ok
+    product['url_check']    = url_ok
+    product['sample_check'] = sample_ok
 
-    # --- おすすめポイントを生成（DMMデータから） ---
-    copy      = build_recommend_points(product)
     act_tags  = actor_tags(product['actors'])
 
     title = product['title']
     if len(title) > 35:
         title = title[:35] + '…'
 
-    lines = []
-    lines.append(f"🎬 {title}")
-    lines.append('')
-    lines.append(copy)
-    lines.append('')
-    if product['price']:
-        lines.append(f"💰 価格: {product['price']}")
-    if act_tags:
-        lines.append(f"👤 {act_tags}")
-    if product['genres']:
-        lines.append(f"🎞 {genre_tags(product['genres'])}")
-    lines.append('')
-    lines.append(url)
-    if sample_short:
-        lines.append(f"▶ サンプル動画: {sample_short}")
-    lines.append(hashtags)
-
-    text = '\n'.join(lines)
-
-    if len(text) > 280:
-        lines2 = []
-        lines2.append(f"🎬 {title}")
-        lines2.append('')
-        lines2.append(copy)
-        lines2.append('')
+    def build_lines(genre_list, copy_text):
+        lines = [f"🎬 {title}", '', copy_text, '']
         if product['price']:
-            lines2.append(f"💰 {product['price']}")
+            lines.append(f"💰 価格: {product['price']}")
         if act_tags:
-            lines2.append(f"👤 {act_tags}")
-        if product['genres']:
-            lines2.append(f"🎞 {genre_tags(product['genres'][:2])}")
-        lines2.append('')
-        lines2.append(url)
-        if sample_short:
-            lines2.append(f"▶ サンプル: {sample_short}")
-        lines2.append(hashtags)
-        text = '\n'.join(lines2)
+            lines.append(f"👤 {act_tags}")
+        if genre_list:
+            lines.append(f"🎞 {genre_tags(genre_list)}")
+        lines.append('')
+        lines.append(url)
+        if sample:
+            lines.append(f"▶ サンプル動画: {sample}")
+        lines.append(hashtags)
+        return lines
 
-    # それでも280文字を超える場合は、おすすめポイントを短くして再調整
-    if len(text) > 280:
-        over = len(text) - 280
+    # おすすめポイント（copy）を入れる「枠」のサイズを先に計算する。
+    # 空文字のときの行数と、copyを入れたときの行数で改行の数が変わらないよう、
+    # 常にcopy行は1行存在する前提でスケルトンを作り、残り文字数を逆算する。
+    skeleton_text = '\n'.join(build_lines(product['genres'], ''))
+    available_for_copy = char_limit - x_text_length(skeleton_text)
+
+    if available_for_copy < 15:
+        # ジャンルタグを削ってでもおすすめポイントのスペースを確保する
+        skeleton_text = '\n'.join(build_lines(product['genres'][:2], ''))
+        available_for_copy = char_limit - x_text_length(skeleton_text)
+
+    copy = build_recommend_points(product, max_len=max(available_for_copy, 15))
+
+    text = '\n'.join(build_lines(product['genres'], copy))
+
+    if x_text_length(text) > char_limit:
+        text = '\n'.join(build_lines(product['genres'][:2], copy))
+
+    # それでも文字数を超える場合は、おすすめポイントをさらに切り詰めて再調整
+    if x_text_length(text) > char_limit:
+        over = x_text_length(text) - char_limit
         short_copy = copy[:max(10, len(copy) - over - 1)] + '…'
         text = text.replace(copy, short_copy, 1)
 
@@ -986,16 +998,14 @@ def save_posts(all_sections):
             for i, (product, text) in enumerate(posts, 1):
                 f.write(f"--- {sort_label} {i}/{len(posts)} ---\n")
                 f.write(f"商品名: {product['title']}\n")
-                f.write(f"文字数: {len(text)}文字\n")
+                f.write(f"文字数: {x_text_length(text)}文字（X換算・URLはt.co23文字換算） / 実際の表示文字数: {len(text)}文字\n")
 
                 url_status = {True: 'OK', False: 'NG（要確認）', None: '未確認'}.get(product.get('url_check'))
                 f.write(f"URL確認: {product['affiliate_url']} [{url_status}]\n")
 
                 if product.get('sample_movie_url'):
                     sample_status = {True: 'OK', False: 'NG（要確認）', None: '未確認'}.get(product.get('sample_check'))
-                    f.write(f"サンプル動画(元URL): {product['sample_movie_url']} [{sample_status}]\n")
-                    if product.get('sample_url_short'):
-                        f.write(f"サンプル動画(短縮URL): {product['sample_url_short']}\n")
+                    f.write(f"サンプル動画: {product['sample_movie_url']} [{sample_status}]\n")
                 f.write("-" * 40 + "\n")
                 f.write(text)
                 f.write("\n\n")
@@ -1011,8 +1021,13 @@ def save_posts(all_sections):
 print(f'🛍️  DMMから商品情報を取得中（フロア: {DMM_FLOOR} / モード: {DMM_SORT_MODE}）...')
 
 all_sections = []
+processed_total = 0
 
 for sort_key, sort_label in SORT_LIST:
+    if processed_total >= MAX_PROCESS_COUNT:
+        print(f'  ⏹  処理件数の上限（{MAX_PROCESS_COUNT}件）に達したため、以降のソートはスキップします。')
+        break
+
     raw_items = fetch_dmm_products(sort_key, sort_label)
     if not raw_items:
         print(f'  ⚠️  [{sort_label}] 商品が取得できませんでした。スキップします。')
@@ -1025,6 +1040,11 @@ for sort_key, sort_label in SORT_LIST:
         products = [p for p in products if price_in_range(p)]
         print(f'  💰 価格フィルター適用: {before_count}件 → {len(products)}件')
 
+    # 合計処理件数の上限を適用
+    remaining_quota = MAX_PROCESS_COUNT - processed_total
+    if len(products) > remaining_quota:
+        products = products[:remaining_quota]
+
     if not products:
         print(f'  ⚠️  [{sort_label}] 価格条件に合う商品がありませんでした。スキップします。')
         continue
@@ -1035,8 +1055,9 @@ for sort_key, sort_label in SORT_LIST:
     for p in products:
         text = build_x_post(p)
         posts.append((p, text))
-        print(f"    ✅ [{len(text)}文字] {p['title'][:30]}...")
+        print(f"    ✅ [X換算{x_text_length(text)}文字] {p['title'][:30]}...")
 
+    processed_total += len(posts)
     all_sections.append((sort_label, posts))
 
 if not all_sections:
