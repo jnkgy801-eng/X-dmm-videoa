@@ -265,19 +265,11 @@ _FALLBACK_PHRASES = [
 
 
 def build_recommend_points(product, max_len=120):
-    """商品データ（ジャンル・出演者・メーカー・レビュー・価格）から、
-    作品の内容が伝わる『おすすめポイント』文章を作る。
+    """商品データのうち、投稿文の他の行（ジャンルタグ・価格表示）と重複しない
+    『レビュー評価・出演者・メーカー』だけを使い、おすすめポイント文を作る。
     max_len の範囲内でできるだけ多くの要素を盛り込み、文字数を有効活用する。
     """
     segments = []
-
-    if product.get('genres'):
-        gs = '・'.join(product['genres'][:3])
-        segments.append(f"ジャンルは{gs}系")
-
-    if product.get('actors'):
-        as_ = '・'.join(product['actors'][:2])
-        segments.append(f"出演は{as_}")
 
     if product.get('review_avg'):
         avg = product['review_avg']
@@ -287,11 +279,12 @@ def build_recommend_points(product, max_len=120):
         else:
             segments.append(f"レビュー評価{avg}の高評価")
 
+    if product.get('actors'):
+        as_ = '・'.join(product['actors'][:2])
+        segments.append(f"出演は{as_}")
+
     if product.get('maker'):
         segments.append(f"{product['maker']}制作")
-
-    if product.get('price'):
-        segments.append(f"価格は{product['price']}")
 
     if not segments:
         segments.append(random.choice(_FALLBACK_PHRASES))
