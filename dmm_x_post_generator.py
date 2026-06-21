@@ -262,12 +262,22 @@ _FALLBACK_PHRASES = [
     "じっくり本編を楽しみたい一本",
     "話題のラインナップの中でも目を引く一作",
 ]
+# データ項目（レビュー・出演者・メーカー）だけでは文字数に余白が出る場合に、
+# 商品個別の事実とは無関係な汎用フレーズで埋めるための候補。誇張・断定は避ける。
+_FILLER_PHRASES = [
+    "高画質サンプル動画でも雰囲気を確認できる",
+    "ダウンロード・ストリーミングどちらにも対応",
+    "スマホ・PCどちらでも視聴可能",
+    "気になっていた方はこのタイミングでぜひ",
+    "サンプルを見てから購入を検討できる",
+]
 
 
 def build_recommend_points(product, max_len=120):
     """商品データのうち、投稿文の他の行（ジャンルタグ・価格表示）と重複しない
-    『レビュー評価・出演者・メーカー』だけを使い、おすすめポイント文を作る。
-    max_len の範囲内でできるだけ多くの要素を盛り込み、文字数を有効活用する。
+    『レビュー評価・出演者・メーカー』を軸におすすめポイント文を作る。
+    データ項目だけで max_len に届かない場合は、商品の事実とは無関係な汎用フレーズ
+    （誇張や個別の内容を断定しないもの）を追加し、Xの文字数上限近くまで使い切る。
     """
     segments = []
 
@@ -289,6 +299,10 @@ def build_recommend_points(product, max_len=120):
     if not segments:
         segments.append(random.choice(_FALLBACK_PHRASES))
 
+    # 汎用フレーズをランダムな順で末尾に追加候補として用意しておく
+    fillers = random.sample(_FILLER_PHRASES, len(_FILLER_PHRASES))
+    segments.extend(fillers)
+
     opener = random.choice(_OPENERS)
     closer = random.choice(_CLOSERS)
 
@@ -299,7 +313,7 @@ def build_recommend_points(product, max_len=120):
         candidate = body + sep + seg
         # opener + candidate + '。' + closer が収まるかチェック
         if len(opener) + len(candidate) + 1 + len(closer) > max_len:
-            break
+            continue  # この要素は入らないが、後続のもっと短い要素が入るかもしれないので継続
         body = candidate
 
     if not body:
