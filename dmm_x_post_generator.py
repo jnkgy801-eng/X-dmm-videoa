@@ -307,24 +307,37 @@ def build_recommend_points(product, max_len=120):
     closer = random.choice(_CLOSERS)
 
     # 入る範囲までセグメントを「、」でつなげて、文字数上限を有効活用する
+    # ※ max_len はX（Twitter）の「重み付き文字数」基準（x_text_length）で渡される。
+    #    日本語・絵文字は1文字=2カウントなので、ここも len() ではなく
+    #    x_text_length() で判定しないと、実際の上限の約2倍も詰め込んでしまう。
     body = ''
     for i, seg in enumerate(segments):
         sep = '' if i == 0 else '、'
         candidate = body + sep + seg
         # opener + candidate + '。' + closer が収まるかチェック
-        if len(opener) + len(candidate) + 1 + len(closer) > max_len:
+        if x_text_length(opener + candidate + '。' + closer) > max_len:
             continue  # この要素は入らないが、後続のもっと短い要素が入るかもしれないので継続
         body = candidate
 
     if not body:
         # 1要素も入らない場合は最低限の要約を切り詰めて表示
-        text = (opener + segments[0])[:max_len - 1] + '…'
-        return text
+        return truncate_to_weighted_length(opener + segments[0], max_len)
 
     text = f"{opener}{body}。{closer}"
-    if len(text) > max_len:
-        text = text[:max_len - 1] + '…'
+    if x_text_length(text) > max_len:
+        text = truncate_to_weighted_length(text, max_len)
     return text
+
+
+def truncate_to_weighted_length(text, max_len):
+    """重み付き文字数（x_text_length）がmax_len以下になるよう、末尾に'…'を付けて切り詰める。"""
+    if x_text_length(text + '…') <= max_len:
+        return text + '…'
+    # 1文字ずつ削りながら収まるところまで縮める
+    truncated = text
+    while truncated and x_text_length(truncated + '…') > max_len:
+        truncated = truncated[:-1]
+    return truncated + '…' if truncated else '…'
 
 
 # ----------------------------------------------------------------
@@ -494,14 +507,55 @@ def price_in_range(product):
 
 # ----------------------------------------------------------------
 # 📏 X（Twitter）の文字数カウント
-#    実際の投稿画面で確認したところ、URLが必ずしもt.co形式（23文字）に
-#    自動短縮されてカウントされるとは限らないことが分かったため、
-#    安全のため「実際に表示される文字数」をそのままカウントする方式に戻す。
-#    （その代わり、URL自体を事前に短縮しておくことで全体の文字数を抑える）
+#    旧実装は len(text) をそのまま使っていたが、これはバグだった。
+#    Xは公式の重み付きカウント方式（twitter-text）を採用しており、
+#    日本語・絵文字・全角記号などは「2文字分」としてカウントされる。
+#    例えば見た目140文字の日本語投稿でも、Xの実カウントでは280文字相当となり
+#    上限ギリギリ〜超過になる。これを反映しないと
+#    「上限内のはずなのに実際は超過していた」事象が起きる。
+#
+#    重み付けルール（X公式 twitter-text の config を反映）:
+#      - 半角英数字・一般的な記号など（コードポイント 0-4351、
+#        および一部の句読点範囲）は 1文字としてカウント
+#      - それ以外（ひらがな・カタカナ・漢字・絵文字・全角記号など）は
+#        2文字としてカウント
+#      - URL（http/https〜）は実際の文字数に関わらず、Xが自動でt.co形式に
+#        短縮するため「23文字」固定としてカウント
 # ----------------------------------------------------------------
+
+# 1文字としてカウントする（重み1）コードポイント範囲
+_X_LOW_WEIGHT_RANGES = [
+    (0, 4351),       # 基本ラテン文字、各種記号、ギリシャ文字、キリル文字 など
+    (8192, 8205),    # 一般句読点（スペース類）
+    (8208, 8223),    # 一般句読点（ハイフン・ダッシュ類）
+    (8242, 8247),    # プライム記号など
+]
+
+_X_URL_PATTERN = re.compile(r'https?://\S+')
+
+
+def _x_char_weight(ch):
+    """1文字あたりの重みを返す（半角=1、それ以外（CJK・絵文字等）=2）。"""
+    cp = ord(ch)
+    for lo, hi in _X_LOW_WEIGHT_RANGES:
+        if lo <= cp <= hi:
+            return 1
+    return 2
+
+
 def x_text_length(text):
-    """Xの文字数カウント。t.co自動短縮はあてにせず、実際の表示文字数をそのまま使う。"""
-    return len(text)
+    """X（Twitter）公式の重み付き文字数カウントを再現する。
+
+    - URLはt.co短縮を見込んで23文字固定で計算
+    - それ以外は文字ごとに重み（半角=1、日本語・絵文字等=2）を合計
+    """
+    urls = _X_URL_PATTERN.findall(text)
+    text_without_urls = _X_URL_PATTERN.sub('', text)
+
+    weighted = sum(_x_char_weight(c) for c in text_without_urls)
+    weighted += len(urls) * 23
+
+    return weighted
 
 
 def build_x_post(product, char_limit=280):
@@ -567,7 +621,8 @@ def build_x_post(product, char_limit=280):
     # それでも文字数を超える場合は、おすすめポイントをさらに切り詰めて再調整
     if x_text_length(text) > char_limit:
         over = x_text_length(text) - char_limit
-        short_copy = copy[:max(10, len(copy) - over - 1)] + '…'
+        copy_budget = max(10, x_text_length(copy) - over)
+        short_copy = truncate_to_weighted_length(copy, copy_budget)
         text = text.replace(copy, short_copy, 1)
 
     return text
