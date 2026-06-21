@@ -346,6 +346,26 @@ def check_url(url, timeout=8):
     except Exception:
         return None
 
+
+def shorten_url(url, timeout=8):
+    """TinyURL（APIキー不要）でURLを短縮する。失敗時は元のURLをそのまま返す。
+    Xの文字数カウントはURLの自動短縮（t.co）に必ずしも依存できないため、
+    実際の文字数を抑えるためにここで短縮しておく。"""
+    if not url:
+        return url
+    try:
+        resp = requests.get(
+            'https://tinyurl.com/api-create.php',
+            params={'url': url},
+            timeout=timeout,
+        )
+        short = resp.text.strip()
+        if resp.status_code == 200 and short.startswith('http'):
+            return short
+    except Exception as e:
+        print(f'  ⚠️  URL短縮に失敗（元のURLを使用します）: {e}')
+    return url
+
 # ================================================================
 # 🔧 DMM API 関数
 # ================================================================
@@ -474,32 +494,32 @@ def price_in_range(product):
 
 # ----------------------------------------------------------------
 # 📏 X（Twitter）の文字数カウント
-#    Xは投稿内のURLをどんな長さでも自動的にt.co形式（23文字固定）に短縮して
-#    文字数をカウントする。そのため、見た目のURLは元の長さのまま表示しつつ、
-#    文字数チェックだけはURLを23文字として計算する。
-#    （手動でのURL短縮サービス利用が不要な理由でもある）
+#    実際の投稿画面で確認したところ、URLが必ずしもt.co形式（23文字）に
+#    自動短縮されてカウントされるとは限らないことが分かったため、
+#    安全のため「実際に表示される文字数」をそのままカウントする方式に戻す。
+#    （その代わり、URL自体を事前に短縮しておくことで全体の文字数を抑える）
 # ----------------------------------------------------------------
-X_T_CO_URL_LENGTH = 23
-_URL_PATTERN = re.compile(r'https?://\S+')
-
-
 def x_text_length(text):
-    """Xの実際の文字数カウント仕様（URL=23文字固定）に合わせた文字数を返す。"""
-    return len(_URL_PATTERN.sub('x' * X_T_CO_URL_LENGTH, text))
+    """Xの文字数カウント。t.co自動短縮はあてにせず、実際の表示文字数をそのまま使う。"""
+    return len(text)
 
 
 def build_x_post(product, char_limit=280):
     hashtags  = HASHTAG_MAP.get(DMM_FLOOR, HASHTAG_MAP['default'])
-    url       = clean_url(product['affiliate_url'])
-    sample    = clean_url(product.get('sample_movie_url', ''))
+    url_full    = clean_url(product['affiliate_url'])
+    sample_full = clean_url(product.get('sample_movie_url', ''))
 
-    # --- URL確認（短縮は行わない） ---
-    url_ok    = check_url(url) if url else None
-    sample_ok = check_url(sample) if sample else None
-    if url and url_ok is False:
-        print(f"    ⚠️  アフィリエイトURLにアクセスできませんでした: {url}")
-    if sample and sample_ok is False:
-        print(f"    ⚠️  サンプル動画URLにアクセスできませんでした: {sample}")
+    # --- URL確認（元のURLに対して行う） ---
+    url_ok    = check_url(url_full) if url_full else None
+    sample_ok = check_url(sample_full) if sample_full else None
+    if url_full and url_ok is False:
+        print(f"    ⚠️  アフィリエイトURLにアクセスできませんでした: {url_full}")
+    if sample_full and sample_ok is False:
+        print(f"    ⚠️  サンプル動画URLにアクセスできませんでした: {sample_full}")
+
+    # --- URL短縮（文字数を確実に抑えるため） ---
+    url    = shorten_url(url_full) if url_full else ''
+    sample = shorten_url(sample_full) if sample_full else ''
 
     # save_posts()で出力するため商品データに確認結果を残しておく
     product['url_check']    = url_ok
@@ -1005,7 +1025,7 @@ def save_posts(all_sections):
             for i, (product, text) in enumerate(posts, 1):
                 f.write(f"--- {sort_label} {i}/{len(posts)} ---\n")
                 f.write(f"商品名: {product['title']}\n")
-                f.write(f"文字数: {x_text_length(text)}文字（X換算・URLはt.co23文字換算） / 実際の表示文字数: {len(text)}文字\n")
+                f.write(f"文字数: {x_text_length(text)}文字（上限280文字）\n")
 
                 url_status = {True: 'OK', False: 'NG（要確認）', None: '未確認'}.get(product.get('url_check'))
                 f.write(f"URL確認: {product['affiliate_url']} [{url_status}]\n")
@@ -1062,7 +1082,7 @@ for sort_key, sort_label in SORT_LIST:
     for p in products:
         text = build_x_post(p)
         posts.append((p, text))
-        print(f"    ✅ [X換算{x_text_length(text)}文字] {p['title'][:30]}...")
+        print(f"    ✅ [{x_text_length(text)}文字] {p['title'][:30]}...")
 
     processed_total += len(posts)
     all_sections.append((sort_label, posts))
