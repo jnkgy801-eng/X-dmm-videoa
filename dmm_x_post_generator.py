@@ -580,6 +580,15 @@ def x_text_length(text):
 
 
 def build_x_post(product, char_limit=280):
+    """後方互換用ラッパー。スレッドの1ポスト目テキストを返す。"""
+    return build_x_thread(product, char_limit)[0]
+
+
+def build_x_thread(product, char_limit=280):
+    """スレッド投稿用に2ポスト分のテキストをリストで返す。
+    [0] 1ポスト目：引き一言 ＋ タイトル ＋ アフィリエイトURL
+    [1] 2ポスト目：おすすめポイント詳細 ＋ 価格・出演者 ＋ ハッシュタグ（＋サンプルURL）
+    """
     hashtags  = HASHTAG_MAP.get(DMM_FLOOR, HASHTAG_MAP['default'])
     url_full    = clean_url(product['affiliate_url'])
     sample_full = clean_url(product.get('sample_movie_url', ''))
@@ -592,28 +601,25 @@ def build_x_post(product, char_limit=280):
     if sample_full and sample_ok is False:
         print(f"    ⚠️  サンプル動画URLにアクセスできませんでした: {sample_full}")
 
-    # --- URL短縮（文字数を確実に抑えるため） ---
+    # --- URL短縮 ---
     url    = shorten_url(url_full) if url_full else ''
     sample = shorten_url(sample_full) if sample_full else ''
 
-    # save_posts()で出力するため商品データに確認結果を残しておく
     product['url_check']    = url_ok
     product['sample_check'] = sample_ok
 
-    act_tags  = actor_tags(product['actors'])
+    act_tags = actor_tags(product['actors'])
 
     title = product['title']
-    if len(title) > 35:
-        title = title[:35] + '…'
+    title_short = (title[:35] + '…') if len(title) > 35 else title
 
-    # ジャンルに応じた追加ハッシュタグを生成
     def extra_genre_hashtags(genre_list):
-        extras = []
-        for g in genre_list:
-            if g in GENRE_EXTRA_HASHTAG_MAP:
-                extras.append(GENRE_EXTRA_HASHTAG_MAP[g])
+        extras = [GENRE_EXTRA_HASHTAG_MAP[g] for g in genre_list if g in GENRE_EXTRA_HASHTAG_MAP]
         return '　'.join(extras)
 
+    # ================================================================
+    # ── 1ポスト目：引き＋タイトル＋URL（シンプルに）
+    # ================================================================
     HEADERS = [
         "これ絶対見て👇",
         "今夜暇な人へ👇",
@@ -621,78 +627,77 @@ def build_x_post(product, char_limit=280):
         "ハズレ引きたくない人へ👇",
         "深夜の一本、これにして👇",
     ]
+    hook = random.choice(COPY_TEMPLATES)
+    header = random.choice(HEADERS)
 
-    def build_lines(genre_list, copy_text):
-        header = random.choice(HEADERS)
-        lines = [header, f"📽 {title}", '']
+    post1_lines = [header, f"📽 {title_short}", '', hook, '', url]
+    post1 = '\n'.join(post1_lines)
+
+    # 1ポスト目が280字を超える場合はhookを切り詰める
+    if x_text_length(post1) > char_limit:
+        over = x_text_length(post1) - char_limit
+        hook_budget = max(10, x_text_length(hook) - over)
+        hook = truncate_to_weighted_length(hook, hook_budget)
+        post1_lines = [header, f"📽 {title_short}", '', hook, '', url]
+        post1 = '\n'.join(post1_lines)
+
+    assert x_text_length(post1) <= char_limit, (
+        f"⚠️ 1ポスト目文字数超過: {x_text_length(post1)} > {char_limit}\n{post1}"
+    )
+
+    # ================================================================
+    # ── 2ポスト目：詳細情報＋ハッシュタグ（スレッドの続き）
+    # ================================================================
+    extra = extra_genre_hashtags(product['genres'])
+    full_hashtags = hashtags + ('　' + extra if extra else '')
+
+    def build_post2_lines(genre_list, copy_text):
+        lines = ['📌 詳細はこちら']
         if copy_text:
-            lines.append(copy_text)
-            lines.append('')
+            lines += ['', copy_text]
+        lines.append('')
         if product['price']:
             lines.append(f"💰 {product['price']}")
         if act_tags:
             lines.append(f"👤 {act_tags}")
         if genre_list:
             lines.append(f"🏷 {genre_tags(genre_list)}")
-        lines.append('')
-        lines.append(url)
         if sample:
             lines.append(f"▶ サンプル: {sample}")
-        # ベースタグ＋ジャンル追加タグを結合
-        extra = extra_genre_hashtags(genre_list)
-        full_hashtags = hashtags + ('　' + extra if extra else '')
-        lines.append(full_hashtags)
+        lines += ['', full_hashtags]
         return lines
 
-    # おすすめポイント（copy）を入れる「枠」のサイズを先に計算する。
-    # 空文字のときの行数と、copyを入れたときの行数で改行の数が変わらないよう、
-    # 常にcopy行は1行存在する前提でスケルトンを作り、残り文字数を逆算する。
-    skeleton_text = '\n'.join(build_lines(product['genres'], ''))
-    available_for_copy = char_limit - x_text_length(skeleton_text)
+    # おすすめポイントに使える文字数を逆算
+    skeleton2 = '\n'.join(build_post2_lines(product['genres'], ''))
+    available = char_limit - x_text_length(skeleton2)
+    copy = build_recommend_points(product, max_len=max(available, 15))
 
-    if available_for_copy < 15:
-        # ジャンルタグを削ってでもおすすめポイントのスペースを確保する
-        skeleton_text = '\n'.join(build_lines(product['genres'][:2], ''))
-        available_for_copy = char_limit - x_text_length(skeleton_text)
+    post2 = '\n'.join(build_post2_lines(product['genres'], copy))
 
-    copy = build_recommend_points(product, max_len=max(available_for_copy, 15))
-
-    text = '\n'.join(build_lines(product['genres'], copy))
-
-    # ── ① ジャンルタグを2件に絞る ──────────────────────────────────
-    if x_text_length(text) > char_limit:
-        text = '\n'.join(build_lines(product['genres'][:2], copy))
-
-    # ── ② おすすめポイントを切り詰める ─────────────────────────────
-    if x_text_length(text) > char_limit:
-        over = x_text_length(text) - char_limit
-        copy_budget = max(10, x_text_length(copy) - over)
-        short_copy = truncate_to_weighted_length(copy, copy_budget)
-        text = text.replace(copy, short_copy, 1)
-
-    # ── ③ サンプルURLを除く ─────────────────────────────────────────
-    if x_text_length(text) > char_limit and sample:
-        text = '\n'.join(build_lines(product['genres'][:2], copy)).replace(
+    # 超過時の段階的フォールバック
+    if x_text_length(post2) > char_limit:
+        post2 = '\n'.join(build_post2_lines(product['genres'][:2], copy))
+    if x_text_length(post2) > char_limit:
+        over = x_text_length(post2) - char_limit
+        copy = truncate_to_weighted_length(copy, max(10, x_text_length(copy) - over))
+        post2 = '\n'.join(build_post2_lines(product['genres'][:2], copy))
+    if x_text_length(post2) > char_limit and sample:
+        post2 = '\n'.join(build_post2_lines(product['genres'][:2], copy)).replace(
             f"\n▶ サンプル: {sample}", ''
         )
-
-    # ── ④ おすすめポイント自体を除く ────────────────────────────────
-    if x_text_length(text) > char_limit:
-        text = '\n'.join(build_lines([], ''))
-
-    # ── ⑤ ハッシュタグをベースのみに削減（#FANZA #PR のみ）─────────
-    if x_text_length(text) > char_limit:
+    if x_text_length(post2) > char_limit:
+        post2 = '\n'.join(build_post2_lines([], ''))
+    if x_text_length(post2) > char_limit:
         minimal_tags = '#FANZA #PR'
-        text = re.sub(r'#FANZA.*$', minimal_tags, text, flags=re.DOTALL)
+        post2 = re.sub(r'#FANZA.*$', minimal_tags, post2, flags=re.DOTALL)
+    if x_text_length(post2) > char_limit:
+        post2 = truncate_to_weighted_length(post2, char_limit)
 
-    # ── ⑥ 最終手段：末尾から強制切り詰め ───────────────────────────
-    if x_text_length(text) > char_limit:
-        text = truncate_to_weighted_length(text, char_limit)
-
-    assert x_text_length(text) <= char_limit, (
-        f"⚠️ 文字数超過バグ: {x_text_length(text)} > {char_limit}\n{text}"
+    assert x_text_length(post2) <= char_limit, (
+        f"⚠️ 2ポスト目文字数超過: {x_text_length(post2)} > {char_limit}\n{post2}"
     )
-    return text
+
+    return [post1, post2]
 
 # ================================================================
 # 🐦 X（Twitter）動画埋め込み投稿
@@ -950,10 +955,13 @@ def upload_video_to_x(api_v1, filepath):
         return None
 
 
-def post_tweet_with_video(client_v2, text, media_id):
-    """media_idを添付して投稿する。成功時はtweet_idを返す。"""
+def post_tweet_with_video(client_v2, text, media_id, reply_to_tweet_id=None):
+    """media_idを添付して投稿する。reply_to_tweet_idを指定するとスレッド返信になる。成功時はtweet_idを返す。"""
     try:
-        resp = client_v2.create_tweet(text=text, media_ids=[media_id])
+        kwargs = dict(text=text, media_ids=[media_id])
+        if reply_to_tweet_id:
+            kwargs['in_reply_to_tweet_id'] = reply_to_tweet_id
+        resp = client_v2.create_tweet(**kwargs)
         tweet_id = resp.data.get('id')
         print(f'  ✅ 投稿完了: https://x.com/i/web/status/{tweet_id}')
         return tweet_id
@@ -962,8 +970,8 @@ def post_tweet_with_video(client_v2, text, media_id):
         return None
 
 
-def post_to_x_api(api_v1, client_v2, product, text):
-    """【API方式】1商品ぶんをダウンロード→アップロード→投稿まで一気に行う。"""
+def post_to_x_api(api_v1, client_v2, product, thread_texts):
+    """【API方式】スレッド投稿。1ポスト目に動画を添付し、2ポスト目を返信チェーンで続ける。"""
     sample_url = clean_url(product.get('sample_movie_url', ''))
     if not sample_url:
         print('  ⚠️  サンプル動画URLが無いためスキップします。')
@@ -978,14 +986,31 @@ def post_to_x_api(api_v1, client_v2, product, text):
         if not media_id:
             return False
 
-        # 動画をポストに埋め込む場合、本文中のURL羅列が二重表示にならないよう
-        # 「▶ サンプル動画: URL」の行は外す（動画自体がプレビュー表示されるため）
-        text_for_post = '\n'.join(
-            line for line in text.split('\n')
+        post1_text = thread_texts[0]
+        # 動画埋め込み時はサンプルURL行を除去（動画プレビューで代替される）
+        post1_text = '\n'.join(
+            line for line in post1_text.split('\n')
             if not line.startswith('▶ サンプル動画:') and not line.startswith('▶ サンプル:')
         )
 
-        return post_tweet_with_video(client_v2, text_for_post, media_id) is not None
+        tweet_id = post_tweet_with_video(client_v2, post1_text, media_id)
+        if not tweet_id:
+            return False
+
+        # 2ポスト目をスレッド返信として投稿
+        if len(thread_texts) > 1:
+            print('  📎 スレッド2ポスト目を投稿中...')
+            try:
+                resp2 = client_v2.create_tweet(
+                    text=thread_texts[1],
+                    in_reply_to_tweet_id=tweet_id,
+                )
+                tweet_id2 = resp2.data.get('id')
+                print(f'  ✅ スレッド2ポスト目完了: https://x.com/i/web/status/{tweet_id2}')
+            except Exception as e:
+                print(f'  ⚠️  スレッド2ポスト目の投稿に失敗（1ポスト目は成功）: {e}')
+
+        return True
     finally:
         try:
             os.unlink(video_path)
@@ -1009,24 +1034,21 @@ def get_browser_page(playwright):
     return browser, context, page
 
 
-def post_to_x_browser(context, page, product, text):
-    """【ブラウザ方式】動画をダウンロードし、Xの投稿画面を直接操作して投稿する。"""
+def post_to_x_browser(context, page, product, thread_texts):
+    """【ブラウザ方式】スレッド投稿。1ポスト目に動画を添付し、2ポスト目を返信チェーンで続ける。"""
     sample_url = clean_url(product.get('sample_movie_url', ''))
     if not sample_url:
         print('  ⚠️  サンプル動画URLが無いためスキップします。')
         return False
 
-    # まず実ブラウザ(同じcontext)経由で動画を取りに行く。
-    # requestsライブラリ単体だとCDN側のbot対策で弾かれることがあるため。
     video_path = resolve_and_download_via_browser(context, sample_url, product.get('content_id', ''))
     if not video_path:
-        # 念のためrequestsベースの方式もフォールバックとして試す
         video_path = download_sample_video(sample_url, product.get('content_id', ''))
     if not video_path:
         return False
 
-    text_for_post = '\n'.join(
-        line for line in text.split('\n')
+    post1_text = '\n'.join(
+        line for line in thread_texts[0].split('\n')
         if not line.startswith('▶ サンプル動画:') and not line.startswith('▶ サンプル:')
     )
 
@@ -1034,21 +1056,34 @@ def post_to_x_browser(context, page, product, text):
         page.goto('https://x.com/compose/post', timeout=30000)
         page.wait_for_selector('div[data-testid="tweetTextarea_0"]', timeout=20000)
 
-        # ログインが切れている場合はここで弾く
         if 'login' in page.url:
             print('  ❌ セッションが切れています。x_login_setup.py を再実行してください。')
             return False
 
-        # 本文入力
+        # 1ポスト目を入力
         page.click('div[data-testid="tweetTextarea_0"]')
-        page.keyboard.type(text_for_post, delay=10)
+        page.keyboard.type(post1_text, delay=10)
 
-        # 動画ファイルを添付（隠しinput[type=file]に直接ファイルパスを渡す）
+        # 動画添付
         file_input = page.locator('input[data-testid="fileInput"]')
         file_input.set_input_files(video_path)
 
-        # アップロード・X側のエンコード処理完了を待つ
         page.wait_for_selector('div[data-testid="attachments"] video', timeout=120000)
+
+        # スレッドの2ポスト目を追加
+        if len(thread_texts) > 1:
+            print('  📎 スレッド2ポスト目を追加中...')
+            try:
+                # 「さらに追加」ボタンをクリックして2ポスト目の入力欄を出す
+                add_btn = page.locator('[data-testid="addButton"]')
+                add_btn.click(timeout=10000)
+                page.wait_for_selector('div[data-testid="tweetTextarea_1"]', timeout=10000)
+                page.click('div[data-testid="tweetTextarea_1"]')
+                page.keyboard.type(thread_texts[1], delay=10)
+            except Exception as e:
+                print(f'  ⚠️  スレッド2ポスト目の入力に失敗（1ポスト目のみ投稿します）: {e}')
+
+        # 投稿ボタンが有効になるまで待つ
         page.wait_for_function(
             """() => {
                 const btn = document.querySelector('[data-testid="tweetButton"]')
@@ -1063,9 +1098,8 @@ def post_to_x_browser(context, page, product, text):
         ).first
         post_button.click()
 
-        # 投稿完了の反映を待つ（コンポーズ画面が閉じる/タイムラインに戻る）
         page.wait_for_timeout(4000)
-        print('  ✅ ブラウザ経由で投稿完了')
+        print('  ✅ ブラウザ経由でスレッド投稿完了')
         return True
 
     except Exception as e:
@@ -1131,12 +1165,12 @@ def save_posts(all_sections):
     total = sum(len(posts) for _, posts in all_sections)
 
     with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(f"# DMMアフィリエイト X投稿文\n")
+        f.write(f"# DMMアフィリエイト X投稿文（スレッド形式）\n")
         f.write(f"# 生成日時: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"# フロア: {DMM_FLOOR} / モード: {DMM_SORT_MODE}\n")
         f.write(f"# 価格フィルター: {DMM_PRICE_RANGE}\n")
         f.write(f"# 取得開始: {DMM_OFFSET}件目 / 各ソート{FETCH_COUNT}件\n")
-        f.write(f"# 総投稿数: {total}件\n")
+        f.write(f"# 総投稿数: {total}件（各商品スレッド2ポスト構成）\n")
         f.write("=" * 60 + "\n\n")
 
         for sort_label, posts in all_sections:
@@ -1144,10 +1178,10 @@ def save_posts(all_sections):
             f.write(f"【{sort_label}】{len(posts)}件\n")
             f.write(f"{'=' * 60}\n\n")
 
-            for i, (product, text) in enumerate(posts, 1):
+            for i, (product, thread) in enumerate(posts, 1):
                 f.write(f"--- {sort_label} {i}/{len(posts)} ---\n")
                 f.write(f"商品名: {product['title']}\n")
-                f.write(f"文字数: {x_text_length(text)}文字（上限280文字）\n")
+                f.write(f"文字数: ポスト1={x_text_length(thread[0])} / ポスト2={x_text_length(thread[1])}（上限各280文字）\n")
 
                 url_status = {True: 'OK', False: 'NG（要確認）', None: '未確認'}.get(product.get('url_check'))
                 f.write(f"URL確認: {product['affiliate_url']} [{url_status}]\n")
@@ -1155,8 +1189,13 @@ def save_posts(all_sections):
                 if product.get('sample_movie_url'):
                     sample_status = {True: 'OK', False: 'NG（要確認）', None: '未確認'}.get(product.get('sample_check'))
                     f.write(f"サンプル動画: {product['sample_movie_url']} [{sample_status}]\n")
+
                 f.write("-" * 40 + "\n")
-                f.write(text)
+                f.write("【ポスト1】\n")
+                f.write(thread[0])
+                f.write("\n\n")
+                f.write("【ポスト2（スレッド続き）】\n")
+                f.write(thread[1])
                 f.write("\n\n")
 
     print(f'\n💾 保存完了！')
@@ -1202,9 +1241,10 @@ for sort_key, sort_label in SORT_LIST:
 
     posts = []
     for p in products:
-        text = build_x_post(p)
-        posts.append((p, text))
-        print(f"    ✅ [{x_text_length(text)}文字] {p['title'][:30]}...")
+        thread = build_x_thread(p)
+        posts.append((p, thread))
+        total_chars = x_text_length(thread[0]) + x_text_length(thread[1])
+        print(f"    ✅ [スレッド {x_text_length(thread[0])}+{x_text_length(thread[1])}文字] {p['title'][:30]}...")
 
     processed_total += len(posts)
     all_sections.append((sort_label, posts))
@@ -1217,7 +1257,10 @@ first_label, first_posts = all_sections[0]
 print('\n' + '=' * 60)
 print(f'📋 投稿文プレビュー（{first_label} 1件目）')
 print('=' * 60)
-print(first_posts[0][1])
+print('--- ポスト1 ---')
+print(first_posts[0][1][0])
+print('--- ポスト2（スレッド続き）---')
+print(first_posts[0][1][1])
 print('=' * 60)
 
 save_posts(all_sections)
@@ -1232,9 +1275,9 @@ if AUTO_POST_TO_X:
 
     # 全セクションを1本のリストにまとめ、サンプル動画があるものだけ対象にする
     flat_posts = [
-        (product, text)
+        (product, thread)
         for _, posts in all_sections
-        for product, text in posts
+        for product, thread in posts
         if product.get('sample_movie_url')
     ]
 
@@ -1242,12 +1285,12 @@ if AUTO_POST_TO_X:
 
     if POST_METHOD == 'api':
         api_v1, client_v2 = get_x_clients()
-        for product, text in flat_posts:
+        for product, thread in flat_posts:
             if posted_count >= X_POST_LIMIT:
                 break
             print(f"\n--- 投稿 {posted_count + 1}/{X_POST_LIMIT} ---")
             print(f"商品名: {product['title'][:40]}")
-            success = post_to_x_api(api_v1, client_v2, product, text)
+            success = post_to_x_api(api_v1, client_v2, product, thread)
             if success:
                 posted_count += 1
                 if posted_count < X_POST_LIMIT:
@@ -1257,12 +1300,12 @@ if AUTO_POST_TO_X:
         with sync_playwright() as pw:
             browser, context, page = get_browser_page(pw)
             try:
-                for product, text in flat_posts:
+                for product, thread in flat_posts:
                     if posted_count >= X_POST_LIMIT:
                         break
                     print(f"\n--- 投稿 {posted_count + 1}/{X_POST_LIMIT} ---")
                     print(f"商品名: {product['title'][:40]}")
-                    success = post_to_x_browser(context, page, product, text)
+                    success = post_to_x_browser(context, page, product, thread)
                     if success:
                         posted_count += 1
                         if posted_count < X_POST_LIMIT:
