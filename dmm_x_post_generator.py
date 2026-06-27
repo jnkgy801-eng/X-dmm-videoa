@@ -55,9 +55,9 @@ DMM_FLOOR = os.environ.get('DMM_FLOOR', 'videoa')
 
 # ----------------------------------------------------------------
 # 📌 ソートモード設定
-#    DMM_SORT_MODE=both（デフォルト）→ 新着20件 ＋ 人気20件 = 計40件を1ファイルに保存
-#    DMM_SORT_MODE=date              → 新着順のみ20件
-#    DMM_SORT_MODE=rank              → 人気順のみ20件
+#    DMM_SORT_MODE=both（デフォルト）→ 新着15件 ＋ 人気15件 = 計30件を1ファイルに保存
+#    DMM_SORT_MODE=date              → 新着順のみ30件
+#    DMM_SORT_MODE=rank              → 人気順のみ30件
 # ----------------------------------------------------------------
 DMM_SORT_MODE = os.environ.get('DMM_SORT_MODE', 'both').lower()
 
@@ -77,6 +77,13 @@ MAX_PROCESS_COUNT = int(os.environ.get('MAX_PROCESS_COUNT', '30'))
 print(f'🔢 処理件数の上限: 合計 {MAX_PROCESS_COUNT} 件（ソート {len(SORT_LIST)} 種類）')
 
 # ----------------------------------------------------------------
+# 🔽 価格フィルター使用時の最低保証件数
+#    価格フィルターで絞り込んだ後も、この件数に達するまで追加取得を繰り返す。
+#    MIN_PROCESS_COUNT=0 で無効化（従来の動作に戻る）
+# ----------------------------------------------------------------
+MIN_PROCESS_COUNT = int(os.environ.get('MIN_PROCESS_COUNT', '10'))
+
+# ----------------------------------------------------------------
 # 🎲 取得開始位置（環境変数未設定時はランダム: 1〜480）
 # ----------------------------------------------------------------
 _raw_start = os.environ.get('POST_START_INDEX', '')
@@ -87,7 +94,7 @@ else:
     POST_START_INDEX = random.randint(1, 480)
     print(f'🎲 ランダム取得開始番号: {POST_START_INDEX}')
 
-FETCH_COUNT = max(1, -(-MAX_PROCESS_COUNT // len(SORT_LIST)))  # 切り上げで按分（例: 30件÷2ソート=15件ずつ）
+FETCH_COUNT = MAX_PROCESS_COUNT if len(SORT_LIST) == 1 else max(1, -(-MAX_PROCESS_COUNT // len(SORT_LIST)))  # 単一ソートは全件、複数ソートは切り上げ按分（例: 30件÷2ソート=15件ずつ）
 DMM_OFFSET  = POST_START_INDEX
 DMM_HITS    = FETCH_COUNT
 
@@ -404,20 +411,22 @@ def shorten_url(url, timeout=8):
 # 🔧 DMM API 関数
 # ================================================================
 
-def fetch_dmm_products(sort_key, sort_label):
+def fetch_dmm_products(sort_key, sort_label, offset=None, hits=None):
     service, floor_name = FLOOR_SERVICE_MAP.get(DMM_FLOOR, ('digital', 'videoa'))
+    _offset = offset if offset is not None else DMM_OFFSET
+    _hits   = hits   if hits   is not None else DMM_HITS
     params = {
         'api_id':       DMM_API_ID,
         'affiliate_id': DMM_AFFILIATE_ID,
         'site':         'FANZA',
         'service':      service,
         'floor':        floor_name,
-        'hits':         DMM_HITS,
-        'offset':       DMM_OFFSET,
+        'hits':         _hits,
+        'offset':       _offset,
         'sort':         sort_key,
         'output':       'json',
     }
-    print(f'\n  [{sort_label}] 取得範囲: {DMM_OFFSET}件目〜{DMM_OFFSET + DMM_HITS - 1}件目')
+    print(f'\n  [{sort_label}] 取得範囲: {_offset}件目〜{_offset + _hits - 1}件目')
     try:
         resp = requests.get(f'{DMM_API_BASE}/ItemList', params=params, timeout=15)
         data = resp.json()
@@ -1212,20 +1221,57 @@ for sort_key, sort_label in SORT_LIST:
         print(f'  ⏹  処理件数の上限（{MAX_PROCESS_COUNT}件）に達したため、以降のソートはスキップします。')
         break
 
-    raw_items = fetch_dmm_products(sort_key, sort_label)
-    if not raw_items:
-        print(f'  ⚠️  [{sort_label}] 商品が取得できませんでした。スキップします。')
-        continue
+    # ----------------------------------------------------------------
+    # 価格フィルター使用時: MIN_PROCESS_COUNT に達するまで追加取得を繰り返す
+    # ----------------------------------------------------------------
+    remaining_quota = MAX_PROCESS_COUNT - processed_total
+    # このソートで目指す件数（上限 and 最低保証の両方を考慮）
+    sort_target = min(remaining_quota, MAX_PROCESS_COUNT // len(SORT_LIST) if len(SORT_LIST) > 1 else MAX_PROCESS_COUNT)
+    min_target  = min(MIN_PROCESS_COUNT, remaining_quota) if PRICE_RANGE_BOUNDS and MIN_PROCESS_COUNT > 0 else 0
 
-    products = [parse_product(item) for item in raw_items]
+    products      = []
+    fetch_offset  = DMM_OFFSET
+    fetch_hits    = DMM_HITS
+    seen_ids      = set()
+    MAX_FETCH_ROUNDS = 10  # 無限ループ防止: 最大10回まで追加取得
+
+    for _round in range(MAX_FETCH_ROUNDS):
+        raw_items = fetch_dmm_products(sort_key, sort_label, offset=fetch_offset, hits=fetch_hits)
+        if not raw_items:
+            print(f'  ⚠️  [{sort_label}] 商品が取得できませんでした。')
+            break
+
+        for item in raw_items:
+            cid = item.get('content_id') or item.get('product_id') or item.get('affiliateURL', '')
+            if cid and cid in seen_ids:
+                continue
+            if cid:
+                seen_ids.add(cid)
+            p = parse_product(item)
+            if PRICE_RANGE_BOUNDS and not price_in_range(p):
+                continue
+            products.append(p)
+            if len(products) >= remaining_quota:
+                break
+
+        collected = len(products)
+        need_more = PRICE_RANGE_BOUNDS and MIN_PROCESS_COUNT > 0 and collected < min_target
+        print(f'  📦 [{sort_label}] 累計確保: {collected}件 / 目標最低: {min_target}件')
+
+        if not need_more or len(raw_items) < fetch_hits:
+            # 目標達成 or これ以上取得できるデータがない
+            if len(raw_items) < fetch_hits and need_more:
+                print(f'  ⚠️  [{sort_label}] DMM APIの取得可能件数の上限に達しました（{collected}件で終了）。')
+            break
+
+        # 取得範囲をずらして追加取得
+        fetch_offset += fetch_hits
+        print(f'  🔄 [{sort_label}] {min_target}件未満（{collected}件）のため、offset={fetch_offset} で追加取得します...')
 
     if PRICE_RANGE_BOUNDS:
-        before_count = len(products)
-        products = [p for p in products if price_in_range(p)]
-        print(f'  💰 価格フィルター適用: {before_count}件 → {len(products)}件')
+        print(f'  💰 価格フィルター適用済み: 合計 {len(products)} 件確保')
 
     # 合計処理件数の上限を適用
-    remaining_quota = MAX_PROCESS_COUNT - processed_total
     if len(products) > remaining_quota:
         products = products[:remaining_quota]
 
