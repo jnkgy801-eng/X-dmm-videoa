@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       post_start_index:
-        description: '取得開始番号（空欄でランダム自動設定）例: 1→1〜20件目, 21→21〜40件目'
+        description: '取得開始番号（空欄でランダム自動設定）例: 1→1件目〜, 31→31件目〜'
         required: false
         default: ''
         type: string
@@ -14,9 +14,9 @@ on:
         default: 'both'
         type: choice
         options:
-          - both   # 新着20件＋人気20件（デフォルト・推奨）
-          - date   # 新着順のみ20件
-          - rank   # 人気順のみ20件
+          - both   # 新着15件＋人気15件 計30件（デフォルト・推奨）
+          - date   # 新着順のみ30件
+          - rank   # 人気順のみ30件
       dmm_floor:
         description: 'フロア種別'
         required: false
@@ -59,6 +59,11 @@ on:
         description: '自動投稿する最大件数（凍結リスク/課金が発生するため必ず指定）'
         required: false
         default: '5'
+        type: string
+      min_process_count:
+        description: '価格フィルター使用時の最低保証件数（この件数に達するまで追加取得）'
+        required: false
+        default: '10'
         type: string
 
 jobs:
@@ -104,6 +109,7 @@ jobs:
           DMM_SORT_MODE:        ${{ github.event.inputs.dmm_sort_mode || 'both' }}
           DMM_FLOOR:            ${{ github.event.inputs.dmm_floor || 'videoa' }}
           DMM_PRICE_RANGE:      ${{ github.event.inputs.dmm_price_range || 'all' }}
+          MIN_PROCESS_COUNT:    ${{ github.event.inputs.min_process_count || '10' }}
           SAVE_TO_REPO:         'true'
           AUTO_POST_TO_X:       ${{ github.event.inputs.auto_post_to_x || 'false' }}
           POST_METHOD:          ${{ github.event.inputs.post_method || 'browser' }}
