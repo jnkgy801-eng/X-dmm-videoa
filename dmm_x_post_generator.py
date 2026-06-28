@@ -81,7 +81,7 @@ print(f'🔢 処理件数の上限: 合計 {MAX_PROCESS_COUNT} 件（ソート {
 #    価格フィルターで絞り込んだ後も、この件数に達するまで追加取得を繰り返す。
 #    MIN_PROCESS_COUNT=0 で無効化（従来の動作に戻る）
 # ----------------------------------------------------------------
-MIN_PROCESS_COUNT = int(os.environ.get('MIN_PROCESS_COUNT', '10'))
+MIN_PROCESS_COUNT = int(os.environ.get('MIN_PROCESS_COUNT', '20'))
 
 # ----------------------------------------------------------------
 # 🎲 取得開始位置（環境変数未設定時はランダム: 1〜480）
@@ -244,25 +244,31 @@ GENRE_EXTRA_HASHTAG_MAP = {
 }
 
 COPY_TEMPLATES = [
-    # ――― 友人の口コミ感覚：思わずクリックしたくなる一言 ―――
-    "これ絶対見て。久々にサムネだけでゾクッときた",
-    "正直期待してなかったのに、気づいたら最後まで一気見してた",
-    "仕事終わりに見たんだけど、見終わったあと余韻がしばらく抜けなかった",
-    "「どうせ似たようなやつ」って思ってたら全然違った。スカッとした",
-    "深夜に一人で見たんだけど、これはズルいくらいよかった",
-    "寝る前に軽く見るつもりが、気づいたら最後まで見てた",
-    "友達に教えたくなるやつ見つけた。リンクから見てみて",
-    "これ無料サンプルだけでも見る価値ある。クリックしてみて",
-    "今日イチの当たり引いた気がする。仕事疲れてる人に特に刺さると思う",
-    "ハズレ続きで疲れてる人、これだけは見てほしい",
-    "サンプルの時点でもうやばかった。本編はもっとよかった",
-    "「うわ…」って声出た。久々にそういう作品に出会えた",
-    "見る前と後で印象まるっきり変わった。それくらいのやつ",
-    "寝不足になるやつ見つけてしまった。リンクから確認してみて",
-    "これ、ビールでも飲みながらゆっくり見てほしいやつ",
-    "スマホで寝ながら見るつもりが、結局布団から出られなかった",
-    "今夜暇な人、これ見て。後悔させない自信がある",
-    "ジャンル好きなら絶対ビビッとくるやつ見つけた",
+    # ――― 購買直結型：「今すぐ買う理由」を作るコピー ―――
+    # 希少性・限定感
+    "毎日FANZAチェックしてるけど、これクラスの作品は月に数本しか出ない。見逃すと後悔するやつ",
+    "このクオリティでこの価格はさすがに安すぎる。FANZAの値付けがバグってると思う",
+    "レンタルで済ませようとしたけど、これは手元に置いておきたくて購入した。それくらいのやつ",
+    "無料サンプルで十分と思ってたのに、本編が気になって結局ポチった。サンプルが罪すぎる",
+    # 社会的証明
+    "レビュー評価見てから買ったけど、評価高いのには理由があった。納得の内容だった",
+    "購入者のコメント見てたら「また観た」「何度でも見られる」って声が多くて気になって買った。正解だった",
+    "FANZAランキング上位をキープしてる理由がわかった。これは実際に見ると納得感がある",
+    # 比較優位
+    "他の似たような作品と比べてみたけど、内容の濃さが全然違う。値段差以上のクオリティ",
+    "サブスクにない作品だから単品購入したけど、それでも全然惜しくない出来だった",
+    "数百円の差でこれだけクオリティが上がるなら、迷わず上位のやつ選んだほうがいい",
+    # 緊急性・背中を押す
+    "FANZAって値段が変わることあるから、気になってるなら今のうちに確認しといたほうがいい",
+    "これ、セール終わったあとに後悔した経験あるので早めに見てほしい",
+    "無料サンプルで気に入ったらそのまま購入できるから、まずサンプルだけ確認してみて",
+    # ROI訴求
+    "映画1本分の値段で何度でも見返せるって考えたら、コスパ的にもアリだと思う",
+    "缶ビール数本分の値段で今夜の時間を最高にできると思ったら安いもんだと思う",
+    "動画配信サービス1ヶ月分より安い。それで手元に残るなら買わない理由がない",
+    # 具体的な購入体験
+    "迷ってる時間がもったいなかった。ポチってから「もっと早く買えばよかった」ってなった",
+    "サンプル見て5分悩んで購入した。その5分が惜しかったくらい内容が良かった",
 ]
 
 def get_copy():
@@ -276,28 +282,28 @@ def get_copy():
 # ----------------------------------------------------------------
 
 _OPENERS = [
-    "当たりだと思った理由を正直に言うと、",
-    "友達に勧めるとしたら迷わずこれ。理由は",
-    "見る前は半信半疑だったけど、",
-    "何が良かったかっていうと、",
+    "正直に購入した理由を言うと、",
+    "迷ってる人に一言だけ言うと、",
+    "お金を出す価値があると思った理由は、",
+    "これを選んだ決め手は、",
 ]
 _CLOSERS = [
-    "リンクから無料サンプルだけでも確認してみて👇",
-    "気になるならまずサンプルだけ見てみて。損はしない",
-    "今夜暇な人はとりあえずリンク踏んでみて",
-    "後悔させる自信はないのでぜひ見てみて👀",
+    "まず無料サンプルだけ見て、気に入ったらそのまま購入できる👇",
+    "サンプル確認 → 気に入ったらポチるだけ。損はしない構造になってる",
+    "今の価格で買えるうちにリンクから確認してみて👇",
+    "サンプルだけでも見てほしい。それで判断できると思う👇",
 ]
 _FALLBACK_PHRASES = [
-    "久々にテンション上がった。それくらいのやつ",
-    "見終わったあとの余韻がしばらく抜けなかった",
-    "「うわ…」って声が出たレベルのやつ",
+    "手元に置いておきたくなる内容だった",
+    "購入後に「早く買えばよかった」ってなったやつ",
+    "これはレンタルじゃなくて買いだと思う",
 ]
 _FILLER_PHRASES = [
-    "無料サンプルで雰囲気確認してから買えるのもいい",
-    "深夜に一人でゆっくり見るのにちょうどいい",
-    "仕事終わりに見るのにぴったりな尺",
-    "スマホでもPCでもどちらでも見られる",
-    "毎日チェックしてる中から厳選したやつ",
+    "無料サンプルで内容確認してから買えるから失敗しにくい",
+    "購入者レビューの評価がかなり高くて安心感がある",
+    "何度でも見返せるから単品購入でもコスパはいい",
+    "FANZAは決済後すぐ視聴できるのが地味に助かる",
+    "毎日チェックしてる中でも特に推せると思ったやつ",
 ]
 
 
@@ -630,11 +636,11 @@ def build_x_thread(product, char_limit=280):
     # ── 1ポスト目：引き＋タイトル＋サンプルURL（無料なので踏みやすい）
     # ================================================================
     HEADERS = [
-        "これ絶対見て👇",
-        "今夜暇な人へ👇",
-        "仕事疲れの人に届いてほしい👇",
-        "ハズレ引きたくない人へ👇",
-        "深夜の一本、これにして👇",
+        "今夜これ買って正解だった👇",
+        "迷ってる人、背中を押す👇",
+        "これは買いだと思ったやつ👇",
+        "サンプル見たら欲しくなる作品👇",
+        "コスパで選ぶならこれ一択👇",
     ]
     hook = random.choice(COPY_TEMPLATES)
     header = random.choice(HEADERS)
@@ -686,15 +692,34 @@ def build_x_thread(product, char_limit=280):
 
     def build_post2_lines(genre_list, copy_text):
         # videoa の場合はポスト2がアフィリエイトリンク専用であることを明示
+        BUY_CTAS = [
+            "🛒 サンプル確認 → 気に入ったらそのまま購入できます👇",
+            "🛒 無料サンプルあり・すぐ視聴できます👇",
+            "🛒 今の価格で購入できます（FANZAは値段変動あり）👇",
+            "🛒 無料サンプルで確認してから購入できます👇",
+        ]
+        OTHER_CTAS = [
+            "📌 無料サンプル確認 → 購入はこちら👇",
+            "📌 サンプルで確認してから購入できます👇",
+        ]
         if DMM_FLOOR == 'videoa':
-            lines = ['🛒 気に入ったら本編をチェック👇']
+            lines = [random.choice(BUY_CTAS)]
         else:
-            lines = ['📌 気に入ったら本編はこちら👇']
+            lines = [random.choice(OTHER_CTAS)]
         if copy_text:
             lines += ['', copy_text]
         lines.append('')
         if product['price']:
-            lines.append(f"💰 {product['price']}")
+            price_num = product.get('price_num')
+            if price_num and price_num <= 500:
+                price_label = f"💰 {product['price']}（ワンコイン以下）"
+            elif price_num and price_num <= 1000:
+                price_label = f"💰 {product['price']}（缶ビール数本分）"
+            elif price_num and price_num <= 2000:
+                price_label = f"💰 {product['price']}（映画1本分以下）"
+            else:
+                price_label = f"💰 {product['price']}"
+            lines.append(price_label)
         if act_tags:
             lines.append(f"👤 {act_tags}")
         if genre_list:
@@ -1259,7 +1284,11 @@ for sort_key, sort_label in SORT_LIST:
     fetch_offset  = DMM_OFFSET
     fetch_hits    = DMM_HITS
     seen_ids      = set()
-    MAX_FETCH_ROUNDS = 10  # 無限ループ防止: 最大10回まで追加取得
+    MAX_FETCH_ROUNDS = 20  # 無限ループ防止: 最大20回まで追加取得（20件確保のため増量）
+
+    # 価格フィルターあり＆最低件数指定がある場合は、最低件数を優先してループ上限を拡大
+    # remaining_quota は絶対上限だが、min_target には達するまで追加取得を続ける
+    effective_min = min_target if PRICE_RANGE_BOUNDS and MIN_PROCESS_COUNT > 0 else 0
 
     for _round in range(MAX_FETCH_ROUNDS):
         raw_items = fetch_dmm_products(sort_key, sort_label, offset=fetch_offset, hits=fetch_hits)
@@ -1277,7 +1306,10 @@ for sort_key, sort_label in SORT_LIST:
             if PRICE_RANGE_BOUNDS and not price_in_range(p):
                 continue
             products.append(p)
-            if len(products) >= remaining_quota:
+            # 価格フィルターなし or min_target未達の場合は remaining_quota で止める
+            # 価格フィルターあり & min_target 未達の場合は、まず min_target まで収集を続ける
+            hard_limit = max(remaining_quota, effective_min) if effective_min > 0 else remaining_quota
+            if len(products) >= hard_limit:
                 break
 
         collected = len(products)
@@ -1298,8 +1330,14 @@ for sort_key, sort_label in SORT_LIST:
         print(f'  💰 価格フィルター適用済み: 合計 {len(products)} 件確保')
 
     # 合計処理件数の上限を適用
-    if len(products) > remaining_quota:
-        products = products[:remaining_quota]
+    # ※ 価格フィルターあり＆最低保証件数が設定されている場合は、min_target を優先して
+    #   MAX_PROCESS_COUNT を超えても最低件数までは確保する（最大 min_target まで）
+    if PRICE_RANGE_BOUNDS and MIN_PROCESS_COUNT > 0:
+        effective_cap = max(remaining_quota, min(min_target, len(products)))
+    else:
+        effective_cap = remaining_quota
+    if len(products) > effective_cap:
+        products = products[:effective_cap]
 
     if not products:
         print(f'  ⚠️  [{sort_label}] 価格条件に合う商品がありませんでした。スキップします。')
