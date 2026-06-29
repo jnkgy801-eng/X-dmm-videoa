@@ -1,0 +1,95 @@
+name: FANZA → はてなブログ 自動投稿
+
+on:
+  # ─── 手動実行（GitHub Actions画面から実行できる）───
+  workflow_dispatch:
+    inputs:
+      dmm_floor:
+        description: 'フロア種別'
+        required: false
+        default: 'videoa'
+        type: choice
+        options:
+          - videoa   # AV動画（デフォルト）
+          - videoc   # 素人・個人撮影
+          - anime    # アニメ
+          - doujin   # 同人
+          - comic    # 漫画
+      dmm_sort_mode:
+        description: 'ソートモード'
+        required: false
+        default: 'rank'
+        type: choice
+        options:
+          - rank   # 人気順（デフォルト・購入されやすい商品を優先）
+          - date   # 新着順（新作を優先）
+      dmm_price_range:
+        description: '価格フィルター'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all          # すべての価格
+          - 0-999        # 999円以下
+          - 1000-1999    # 1000〜1999円
+          - 2000-2999    # 2000〜2999円
+          - 3000-4999    # 3000〜4999円
+      blog_post_limit:
+        description: '1回の実行で投稿する記事数（多すぎるとスパム判定のリスクあり）'
+        required: false
+        default: '5'
+        type: string
+      blog_draft:
+        description: '下書き保存のみ（公開しない）：内容確認したい時にONにする'
+        required: false
+        default: false
+        type: boolean
+
+  # ─── 自動実行スケジュール（毎日1回）───
+  # ※ 毎日投稿しすぎるとはてなのスパム判定を受けるリスクがある
+  #    最初は手動実行で様子を見て、問題なければスケジュールを有効化する
+  # schedule:
+  #   - cron: '0 10 * * *'   # 毎日 日本時間 19:00（UTC 10:00）に実行
+
+jobs:
+  blog-post:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v3
+
+      - name: Pythonのセットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 依存ライブラリのインストール
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: 取得開始番号をランダム設定
+        id: set_start
+        run: |
+          RAND=$(python3 -c "import random; print(random.randint(1, 300))")
+          echo "start_index=$RAND" >> $GITHUB_OUTPUT
+          echo "🎲 取得開始番号: $RAND"
+
+      - name: はてなブログに記事を投稿
+        env:
+          # ─── DMM API（既存のSecretsをそのまま使う）───
+          DMM_API_ID:       ${{ secrets.DMM_API_ID }}
+          DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
+          # ─── はてなブログ（新たにSecretsに追加が必要）───
+          HATENA_ID:        ${{ secrets.HATENA_ID }}
+          HATENA_BLOG_ID:   ${{ secrets.HATENA_BLOG_ID }}
+          HATENA_API_KEY:   ${{ secrets.HATENA_API_KEY }}
+          # ─── 実行パラメータ ───
+          DMM_FLOOR:        ${{ github.event.inputs.dmm_floor || 'videoa' }}
+          DMM_SORT_MODE:    ${{ github.event.inputs.dmm_sort_mode || 'rank' }}
+          DMM_PRICE_RANGE:  ${{ github.event.inputs.dmm_price_range || 'all' }}
+          BLOG_POST_LIMIT:  ${{ github.event.inputs.blog_post_limit || '5' }}
+          BLOG_DRAFT:       ${{ github.event.inputs.blog_draft || 'false' }}
+          POST_START_INDEX: ${{ steps.set_start.outputs.start_index }}
+        run: python dmm_blog_post_generator.py
