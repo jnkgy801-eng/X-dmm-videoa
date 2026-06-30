@@ -668,38 +668,19 @@ def build_x_thread(product, char_limit=280):
     # サービス新規報酬はFANZAへの新規会員登録で発生する。
     # ポスト1にアフィリエイトURLを置くことで、1クリックで登録ページまで誘導できる。
     # サンプルURLは「無料で見られる」訴求、アフィURL直後に「登録はこちら」を添える構成。
-    if DMM_FLOOR == 'videoa':
-        post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {sample}", f"🛒 作品ページ（FANZA）: {url}"]
-    else:
-        post1_url = sample if sample else url
-        if sample:
-            post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {post1_url}", f"🛒 作品ページ: {url}"]
-        else:
-            post1_lines = [header, f"📽 {title_short}", '', hook, '', url]
+    # 【v4改善】ポスト1にURLを2つ入れるとXのリンクカード（画像）が表示されなくなるため、
+    # ポスト1には無料サンプルURLのみを掲載し、アフィリエイトURLはポスト2にまとめる。
+    post1_url = sample if sample else url
+    post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {post1_url}" if sample else post1_url]
 
     post1 = '\n'.join(post1_lines)
 
-    # 【v3】1ポスト目が280字を超える場合はhookを切り詰め、それでも超えたらアフィURLを除く
+    # 1ポスト目が280字を超える場合はhookを切り詰める
     if x_text_length(post1) > char_limit:
         over = x_text_length(post1) - char_limit
         hook_budget = max(10, x_text_length(hook) - over)
         hook = truncate_to_weighted_length(hook, hook_budget)
-        if DMM_FLOOR == 'videoa':
-            post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {sample}", f"🛒 作品ページ（FANZA）: {url}"]
-        else:
-            post1_url = sample if sample else url
-            if sample:
-                post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {post1_url}", f"🛒 作品ページ: {url}"]
-            else:
-                post1_lines = [header, f"📽 {title_short}", '', hook, '', url]
-        post1 = '\n'.join(post1_lines)
-    # アフィURLを含めても超過する場合はアフィURLを除いてサンプルのみにフォールバック
-    if x_text_length(post1) > char_limit:
-        if DMM_FLOOR == 'videoa':
-            post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {sample}"]
-        else:
-            post1_url = sample if sample else url
-            post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {post1_url}" if sample else post1_url]
+        post1_lines = [header, f"📽 {title_short}", '', hook, '', f"▶ 無料サンプル: {post1_url}" if sample else post1_url]
         post1 = '\n'.join(post1_lines)
 
     assert x_text_length(post1) <= char_limit, (
