@@ -45,11 +45,12 @@ on:
         default: false
         type: boolean
 
-  # ─── 自動実行スケジュール（毎日1回・日本時間19:00）───
-  # 毎日5件 × 365日 = 年間1,825記事が自動で積み上がる
-  # はてなのスパム判定を避けるため1日5件以内を推奨
+  # ─── 自動実行スケジュール（毎日2回・日本時間 9:00 / 19:00）───
+  # 朝夜2回×5件=1日10件投稿。記事数を早く積み増すための設定。
+  # はてなのスパム判定を避けるため、1回あたり5件以内・間隔は最低6時間以上空ける
   schedule:
-    - cron: '0 10 * * *'   # UTC 10:00 = 日本時間 19:00
+    - cron: '0 0 * * *'    # UTC 0:00  = 日本時間  9:00（朝）
+    - cron: '0 10 * * *'   # UTC 10:00 = 日本時間 19:00（夜）
 
 jobs:
   blog-post:
@@ -85,6 +86,7 @@ jobs:
           HATENA_ID:        ${{ secrets.HATENA_ID }}
           HATENA_BLOG_ID:   ${{ secrets.HATENA_BLOG_ID }}
           HATENA_API_KEY:   ${{ secrets.HATENA_API_KEY }}
+          HATENA_BLOG_BASE_URL: ${{ secrets.HATENA_BLOG_BASE_URL }}
           # ─── 実行パラメータ ───
           # スケジュール実行時はデフォルト値が使われる（手動実行時はUI入力値が優先）
           DMM_FLOOR:        ${{ github.event.inputs.dmm_floor || 'videoa' }}
