@@ -45,11 +45,11 @@ on:
         default: false
         type: boolean
 
-  # ─── 自動実行スケジュール（毎日1回）───
-  # ※ 毎日投稿しすぎるとはてなのスパム判定を受けるリスクがある
-  #    最初は手動実行で様子を見て、問題なければスケジュールを有効化する
-  # schedule:
-  #   - cron: '0 10 * * *'   # 毎日 日本時間 19:00（UTC 10:00）に実行
+  # ─── 自動実行スケジュール（毎日1回・日本時間19:00）───
+  # 毎日5件 × 365日 = 年間1,825記事が自動で積み上がる
+  # はてなのスパム判定を避けるため1日5件以内を推奨
+  schedule:
+    - cron: '0 10 * * *'   # UTC 10:00 = 日本時間 19:00
 
 jobs:
   blog-post:
@@ -81,11 +81,12 @@ jobs:
           # ─── DMM API（既存のSecretsをそのまま使う）───
           DMM_API_ID:       ${{ secrets.DMM_API_ID }}
           DMM_AFFILIATE_ID: ${{ secrets.DMM_AFFILIATE_ID }}
-          # ─── はてなブログ（新たにSecretsに追加が必要）───
+          # ─── はてなブログ ───
           HATENA_ID:        ${{ secrets.HATENA_ID }}
           HATENA_BLOG_ID:   ${{ secrets.HATENA_BLOG_ID }}
           HATENA_API_KEY:   ${{ secrets.HATENA_API_KEY }}
           # ─── 実行パラメータ ───
+          # スケジュール実行時はデフォルト値が使われる（手動実行時はUI入力値が優先）
           DMM_FLOOR:        ${{ github.event.inputs.dmm_floor || 'videoa' }}
           DMM_SORT_MODE:    ${{ github.event.inputs.dmm_sort_mode || 'rank' }}
           DMM_PRICE_RANGE:  ${{ github.event.inputs.dmm_price_range || 'all' }}
