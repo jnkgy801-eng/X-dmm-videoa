@@ -82,7 +82,7 @@ SORT_LIST = SORT_TARGETS.get(DMM_SORT_MODE, SORT_TARGETS['both'])
 #    DMM_SORT_MODE=both のように複数ソートを使う場合は、合計でこの件数に収まるよう
 #    各ソートの取得件数を自動的に按分する。
 # ----------------------------------------------------------------
-MAX_PROCESS_COUNT = int(os.environ.get('MAX_PROCESS_COUNT', '30'))
+MAX_PROCESS_COUNT = int(os.environ.get('MAX_PROCESS_COUNT', '100'))
 print(f'🔢 処理件数の上限: 合計 {MAX_PROCESS_COUNT} 件（ソート {len(SORT_LIST)} 種類）')
 
 # ----------------------------------------------------------------
@@ -90,7 +90,7 @@ print(f'🔢 処理件数の上限: 合計 {MAX_PROCESS_COUNT} 件（ソート {
 #    価格フィルターで絞り込んだ後も、この件数に達するまで追加取得を繰り返す。
 #    MIN_PROCESS_COUNT=0 で無効化（従来の動作に戻る）
 # ----------------------------------------------------------------
-MIN_PROCESS_COUNT = int(os.environ.get('MIN_PROCESS_COUNT', '20'))
+MIN_PROCESS_COUNT = int(os.environ.get('MIN_PROCESS_COUNT', '40'))
 
 # ----------------------------------------------------------------
 # 🎲 取得開始位置（環境変数未設定時はランダム: 1〜480）
