@@ -94,18 +94,30 @@ MIN_PROCESS_COUNT = int(os.environ.get('MIN_PROCESS_COUNT', '20'))
 
 # ----------------------------------------------------------------
 # 🎲 取得開始位置（環境変数未設定時はランダム: 1〜480）
+#    ただし新着順（-date）で取得する場合、空欄（未指定）なら「最新のデータ」から
+#    検索したいので、その場合は開始位置を1固定にする（POST_START_INDEX_EXPLICITで判定）。
 # ----------------------------------------------------------------
 _raw_start = os.environ.get('POST_START_INDEX', '')
-if _raw_start.strip().isdigit():
+POST_START_INDEX_EXPLICIT = _raw_start.strip().isdigit()
+if POST_START_INDEX_EXPLICIT:
     POST_START_INDEX = int(_raw_start.strip())
     print(f'📌 指定された取得開始番号: {POST_START_INDEX}')
 else:
     POST_START_INDEX = random.randint(1, 480)
-    print(f'🎲 ランダム取得開始番号: {POST_START_INDEX}')
+    print(f'🎲 ランダム取得開始番号: {POST_START_INDEX}（新着順検索では未指定時は1件目＝最新データから検索します）')
 
 FETCH_COUNT = MAX_PROCESS_COUNT if len(SORT_LIST) == 1 else max(1, -(-MAX_PROCESS_COUNT // len(SORT_LIST)))  # 単一ソートは全件、複数ソートは切り上げ按分（例: 30件÷2ソート=15件ずつ）
 DMM_OFFSET  = POST_START_INDEX
 DMM_HITS    = FETCH_COUNT
+
+# ----------------------------------------------------------------
+# 🔁 FANZA/DMM API リトライ設定
+#    通信エラーやAPI側のエラー応答（一時的なレート制限等）が発生した場合、
+#    すぐに諦めず、FANZA APIの問い合わせ上限（DMM_MAX_RETRIES回）まで
+#    間隔を空けながらリトライする。
+# ----------------------------------------------------------------
+DMM_MAX_RETRIES    = int(os.environ.get('DMM_MAX_RETRIES', '10'))
+DMM_RETRY_WAIT_SEC = float(os.environ.get('DMM_RETRY_WAIT_SEC', '3'))
 
 # ----------------------------------------------------------------
 # 💰 価格フィルター設定
@@ -449,20 +461,37 @@ def fetch_dmm_products(sort_key, sort_label, offset=None, hits=None):
         'output':       'json',
     }
     print(f'\n  [{sort_label}] 取得範囲: {_offset}件目〜{_offset + _hits - 1}件目')
-    try:
-        resp = requests.get(f'{DMM_API_BASE}/ItemList', params=params, timeout=15)
-        data = resp.json()
-        items = data.get('result', {}).get('items', [])
-        if isinstance(items, dict):
-            items = items.get('item', [])
-        if items:
-            url_str = items[0].get('affiliateURL', '')
-            print(f"  URLの総文字数: {len(url_str)} / 末尾10文字: {url_str[-10:]}")
-        print(f'  ✅ {len(items)} 件取得しました。')
-        return items
-    except Exception as e:
-        print(f'  ❌ DMM APIエラー: {e}')
-        return []
+
+    for attempt in range(1, DMM_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(f'{DMM_API_BASE}/ItemList', params=params, timeout=15)
+            data = resp.json()
+            result = data.get('result', {})
+
+            # DMM APIがエラー応答を返した場合（レート制限・一時的な問い合わせ上限超過など）
+            status = result.get('status')
+            if status is not None and str(status) != '200':
+                message = result.get('message') or data.get('message') or '不明なエラー'
+                raise RuntimeError(f'DMM APIエラー応答 status={status} message={message}')
+
+            items = result.get('items', [])
+            if isinstance(items, dict):
+                items = items.get('item', [])
+            if items:
+                url_str = items[0].get('affiliateURL', '')
+                print(f"  URLの総文字数: {len(url_str)} / 末尾10文字: {url_str[-10:]}")
+            print(f'  ✅ {len(items)} 件取得しました。')
+            return items
+        except Exception as e:
+            if attempt >= DMM_MAX_RETRIES:
+                print(f'  ❌ DMM APIエラー（{attempt}/{DMM_MAX_RETRIES}回でリトライ上限に到達）: {e}')
+                return []
+            wait_sec = DMM_RETRY_WAIT_SEC * attempt  # 試行のたびに待機時間を延ばす（簡易バックオフ）
+            print(f'  ⚠️  DMM APIエラー（{attempt}/{DMM_MAX_RETRIES}回目）: {e}')
+            print(f'  ⏳ {wait_sec:.1f}秒待機してリトライします...')
+            time.sleep(wait_sec)
+
+    return []
 
 
 def parse_product(item):
@@ -1331,7 +1360,13 @@ for sort_key, sort_label in SORT_LIST:
     min_target = min(MIN_PROCESS_COUNT, remaining_quota) if MIN_PROCESS_COUNT > 0 else 0
 
     products      = []
-    fetch_offset  = DMM_OFFSET
+    # 新着順（-date）で開始番号が未指定（空欄）の場合は、ランダム開始位置ではなく
+    # 1件目（＝最新データ）から検索する
+    if sort_key == '-date' and not POST_START_INDEX_EXPLICIT:
+        fetch_offset = 1
+        print(f'  🆕 [{sort_label}] 開始番号が未指定のため、最新データ（1件目）から検索します。')
+    else:
+        fetch_offset = DMM_OFFSET
     fetch_hits    = DMM_HITS
     seen_ids      = set()
     MAX_FETCH_ROUNDS = 20  # 無限ループ防止: 最大20回まで追加取得（20件確保のため増量）

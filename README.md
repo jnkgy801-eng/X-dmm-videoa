@@ -71,8 +71,10 @@ playwright install chromium  # 自動投稿（browser方式）を使う場合の
 | `DMM_FLOOR` | `videoa` | 取得するフロア。`videoa` / `videoc` / `anime` / `doujin` / `comic` / `goods` |
 | `DMM_SORT_MODE` | `both` | `both`（新着＋人気）/ `date`（新着のみ）/ `rank`（人気のみ） |
 | `DMM_PRICE_RANGE` | `all` | 価格フィルター。例: `0-999` / `1000-1999` / `5000-`（上限なし）/ `all` |
-| `POST_START_INDEX` | ランダム（1〜480） | 取得開始番号。空欄でランダム |
+| `POST_START_INDEX` | ランダム（1〜480） | 取得開始番号。空欄でランダム（ただし新着順「-date」で検索する場合は、空欄なら1件目＝最新データから検索します） |
 | `MAX_PROCESS_COUNT` | `30` | 1回の実行で処理する商品数の上限 |
+| `DMM_MAX_RETRIES` | `10` | FANZA/DMM APIへの問い合わせが失敗した場合のリトライ回数の上限 |
+| `DMM_RETRY_WAIT_SEC` | `3` | リトライ時の待機秒数（試行のたびに延びる簡易バックオフ） |
 
 ### 自動投稿（任意）
 
