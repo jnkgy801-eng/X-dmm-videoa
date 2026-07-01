@@ -246,8 +246,8 @@ HASHTAG_MAP = {
     # 【v3改善】非会員ユーザーにリーチしやすいタグ構成
     # #AV や #FANZAおすすめ は既存会員ばかりに届く傾向があるため変更
     # 一般エンタメ・動画系タグで間口を広げ、FANZA未登録層にアプローチ
-    'videoa': '#アダルト動画 #FANZA #無料サンプルあり #PR',
-    'videoc': '#素人動画 #FANZA #個人撮影 #無料サンプルあり #PR',
+    'videoa': '#アダルト動画 #FANZA #PR',
+    'videoc': '#素人動画 #FANZA #個人撮影 #PR',
     'anime':  '#エロアニメ #FANZA #アニメ好き #PR',
     'doujin': '#同人誌 #FANZA #エロ同人 #PR',
     'comic':  '#エロ漫画 #FANZA #電子書籍 #PR',
@@ -508,7 +508,13 @@ def parse_product(item):
                 price_num = int(digits)
                 price_str = f'\u00a5{price_num:,}'
     actors = [a.get('name', '') for a in (item.get('iteminfo', {}).get('actress') or [])][:3]
-    genres = [g.get('name', '') for g in (item.get('iteminfo', {}).get('genre') or [])][:3]
+    # 【表示除外】「ハイビジョン」「無料サンプルあり」はジャンルタグとして意味が薄いため非表示にする
+    EXCLUDED_GENRES = {'ハイビジョン', '無料サンプルあり'}
+    genres = [
+        g.get('name', '')
+        for g in (item.get('iteminfo', {}).get('genre') or [])
+        if g.get('name', '') not in EXCLUDED_GENRES
+    ][:3]
     maker  = ((item.get('iteminfo', {}).get('maker') or [{}])[0]).get('name', '')
 
     sample_movie_url = ''
